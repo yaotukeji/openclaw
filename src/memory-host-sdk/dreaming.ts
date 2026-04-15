@@ -626,6 +626,9 @@ export function resolveMemoryDreamingWorkspaces(
     if (!entry || typeof entry !== "object" || typeof entry.id !== "string") {
       continue;
     }
+    if (entry.dreaming?.enabled === false) {
+      continue;
+    }
     const id = normalizeOptionalLowercaseString(entry.id);
     if (!id || seenAgents.has(id)) {
       continue;
