@@ -567,11 +567,6 @@ export const channelsHandlers: GatewayRequestHandlers = {
       return;
     }
     const runtimeConfig = context.getRuntimeConfig();
-    const configBlockError = resolveChannelConfigBlockError({
-      cfg: runtimeConfig,
-      channelId,
-      action: "starting it",
-    });
     const cfg = applyPluginAutoEnable({
       config: runtimeConfig,
       env: process.env,
@@ -581,13 +576,15 @@ export const channelsHandlers: GatewayRequestHandlers = {
       respond(
         false,
         undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          configBlockError ?? `unknown channel: ${formatForLog(rawChannel)}`,
-        ),
+        errorShape(ErrorCodes.INVALID_REQUEST, `unknown channel: ${formatForLog(rawChannel)}`),
       );
       return;
     }
+    const configBlockError = resolveChannelConfigBlockError({
+      cfg: runtimeConfig,
+      channelId,
+      action: "starting it",
+    });
     if (configBlockError) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, configBlockError));
       return;

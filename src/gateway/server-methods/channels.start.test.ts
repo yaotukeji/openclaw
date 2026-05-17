@@ -163,7 +163,7 @@ describe("channelsHandlers channels.start", () => {
     );
   });
 
-  it("uses the bundled channel catalog fallback when registry normalization misses", async () => {
+  it("reports unknown channel before suggesting config for an unloaded plugin", async () => {
     const respond = vi.fn();
     mocks.normalizeChannelId.mockReturnValueOnce(null);
     mocks.normalizeChatChannelId.mockReturnValueOnce("whatsapp");
@@ -178,8 +178,7 @@ describe("channelsHandlers channels.start", () => {
       undefined,
       expect.objectContaining({
         code: "INVALID_REQUEST",
-        message:
-          "Channel whatsapp is not configured. Add channels.whatsapp to your config before starting it.",
+        message: "unknown channel: whatsapp",
       }),
     );
   });
