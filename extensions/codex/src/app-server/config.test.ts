@@ -765,6 +765,16 @@ allowed_sandbox_modes = ["read-only", "workspace-write"]
     });
   });
 
+  it("fails closed when normalized OpenClaw ask mode cannot use user approvals", () => {
+    expect(() =>
+      resolveRuntimeForTest({
+        pluginConfig: {},
+        execMode: "ask",
+        requirementsToml: 'allowed_approvals_reviewers = ["auto_review"]\n',
+      }),
+    ).toThrow("tools.exec.mode=ask requires Codex app-server user approvals");
+  });
+
   it("keeps normalized OpenClaw full exec mode on default Codex yolo", () => {
     const runtime = resolveRuntimeForTest({
       pluginConfig: {},

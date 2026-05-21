@@ -953,13 +953,7 @@ function selectUserApprovalsReviewer(
   if (allowedApprovalsReviewers === undefined || allowedApprovalsReviewers.has("user")) {
     return "user";
   }
-  if (allowedApprovalsReviewers.has("guardian_subagent")) {
-    return "guardian_subagent";
-  }
-  if (allowedApprovalsReviewers.has("auto_review")) {
-    return "auto_review";
-  }
-  return "user";
+  throw new Error("tools.exec.mode=ask requires Codex app-server user approvals");
 }
 
 function selectGuardianSandbox(
