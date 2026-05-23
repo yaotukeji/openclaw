@@ -1195,6 +1195,7 @@ describe("runCodexAppServerAttempt", () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(sessionFile, workspaceDir);
+    params.sessionKey = `agent:main:${path.basename(tempDir)}:sandbox`;
     params.disableTools = false;
     params.runtimePlan = createCodexRuntimePlanFixture();
     const sandbox = {
