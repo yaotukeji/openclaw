@@ -26,20 +26,35 @@ type CapabilityProviderMetadataKey =
   | "musicGenerationProviderMetadata";
 type CapabilityConfigSignal = Parameters<typeof manifestConfigSignalPasses>[0]["signal"];
 type CapabilityProviderBaseUrl = Parameters<typeof manifestProviderBaseUrlGuardPasses>[0]["guard"];
+type CapabilityAuthSignal = {
+  provider: string;
+  providerBaseUrl?: CapabilityProviderBaseUrl;
+};
+type CapabilityAuthSignalsResult = {
+  signals: CapabilityAuthSignal[];
+  invalid: boolean;
+};
+type ReadValueResult = { ok: true; value: unknown } | { ok: false };
+type ArrayCopyResult = { ok: true; entries: unknown[] } | { ok: false; entries: [] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readRecordValue(record: unknown, key: string): unknown {
+function readRecordValueResult(record: unknown, key: string): ReadValueResult {
   if (!isRecord(record)) {
-    return undefined;
+    return { ok: true, value: undefined };
   }
   try {
-    return record[key];
+    return { ok: true, value: record[key] };
   } catch {
-    return undefined;
+    return { ok: false };
   }
+}
+
+function readRecordValue(record: unknown, key: string): unknown {
+  const result = readRecordValueResult(record, key);
+  return result.ok ? result.value : undefined;
 }
 
 function copyArrayEntries(value: unknown): unknown[] {
@@ -61,6 +76,27 @@ function copyArrayEntries(value: unknown): unknown[] {
     }
   }
   return entries;
+}
+
+function copyArrayEntriesResult(value: unknown): ArrayCopyResult {
+  if (!Array.isArray(value)) {
+    return { ok: true, entries: [] };
+  }
+  let length = 0;
+  try {
+    length = value.length;
+  } catch {
+    return { ok: false, entries: [] };
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      entries.push(value[index]);
+    } catch {
+      return { ok: false, entries: [] };
+    }
+  }
+  return { ok: true, entries };
 }
 
 function copyStringArrayEntries(value: unknown): string[] {
@@ -89,33 +125,51 @@ function listCapabilityAuthSignals(params: {
   plugin: PluginManifestRecord;
   key: CapabilityContractKey;
   providerId: string;
-}): Array<{
-  provider: string;
-  providerBaseUrl?: NonNullable<
-    NonNullable<PluginManifestRecord["imageGenerationProviderMetadata"]>[string]["authSignals"]
-  >[number]["providerBaseUrl"];
-}> {
+}): CapabilityAuthSignalsResult {
   const metadata = readCapabilityProviderMetadata(params.plugin, params.key, params.providerId);
-  const authSignals = copyArrayEntries(readRecordValue(metadata, "authSignals"))
-    .filter(isRecord)
-    .flatMap((signal) => {
-      const provider = readRecordValue(signal, "provider");
-      if (typeof provider !== "string") {
-        return [];
-      }
-      const providerBaseUrl = readRecordValue(signal, "providerBaseUrl") as
-        | CapabilityProviderBaseUrl
-        | undefined;
-      return [{ provider, ...(providerBaseUrl ? { providerBaseUrl } : {}) }];
-    });
-  if (authSignals.length > 0) {
-    return authSignals;
+  const rawAuthSignals = readRecordValueResult(metadata, "authSignals");
+  if (!rawAuthSignals.ok) {
+    return { signals: [], invalid: true };
   }
-  return [
-    params.providerId,
-    ...copyStringArrayEntries(readRecordValue(metadata, "aliases")),
-    ...copyStringArrayEntries(readRecordValue(metadata, "authProviders")),
-  ].map((provider) => ({ provider }));
+  const hasAuthSignals = rawAuthSignals.value !== undefined;
+  if (hasAuthSignals && !Array.isArray(rawAuthSignals.value)) {
+    return { signals: [], invalid: true };
+  }
+  const authSignalEntries = copyArrayEntriesResult(rawAuthSignals.value);
+  if (!authSignalEntries.ok) {
+    return { signals: [], invalid: true };
+  }
+  let invalid = false;
+  const authSignals = authSignalEntries.entries.flatMap((signal) => {
+    if (!isRecord(signal)) {
+      invalid = true;
+      return [];
+    }
+    const providerResult = readRecordValueResult(signal, "provider");
+    const providerBaseUrlResult = readRecordValueResult(signal, "providerBaseUrl");
+    if (!providerResult.ok || !providerBaseUrlResult.ok) {
+      invalid = true;
+      return [];
+    }
+    const provider = providerResult.value;
+    if (typeof provider !== "string") {
+      invalid = true;
+      return [];
+    }
+    const providerBaseUrl = providerBaseUrlResult.value as CapabilityProviderBaseUrl | undefined;
+    return [{ provider, ...(providerBaseUrl ? { providerBaseUrl } : {}) }];
+  });
+  if (hasAuthSignals) {
+    return { signals: authSignals, invalid: invalid || authSignals.length === 0 };
+  }
+  return {
+    signals: [
+      params.providerId,
+      ...copyStringArrayEntries(readRecordValue(metadata, "aliases")),
+      ...copyStringArrayEntries(readRecordValue(metadata, "authProviders")),
+    ].map((provider) => ({ provider })),
+    invalid,
+  };
 }
 
 function readCapabilityProviderMetadata(
@@ -239,11 +293,15 @@ function hasConfiguredCapabilityProviderSignal(params: {
   ) {
     return true;
   }
-  for (const signal of listCapabilityAuthSignals({
+  const authSignals = listCapabilityAuthSignals({
     plugin: params.plugin,
     key: params.key,
     providerId: params.providerId,
-  })) {
+  });
+  if (authSignals.invalid) {
+    return false;
+  }
+  for (const signal of authSignals.signals) {
     if (
       !providerBaseUrlGuardPasses({
         config: params.config,

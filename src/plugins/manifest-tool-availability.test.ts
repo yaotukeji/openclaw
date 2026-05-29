@@ -109,6 +109,29 @@ describe("manifest tool availability", () => {
     ).toBe(true);
   });
 
+  it("fails closed when tool auth signal entries are malformed", () => {
+    const plugin = createPlugin({
+      toolMetadata: {
+        fuzz_move_delta: {
+          aliases: ["mockplugin"],
+          authSignals: [{}] as never,
+        },
+      },
+      providerAuthEnvVars: {
+        mockplugin: ["MOCKPLUGIN_API_KEY"],
+      },
+    });
+    vi.stubEnv("MOCKPLUGIN_API_KEY", "mock-key");
+
+    expect(
+      hasManifestToolAvailability({
+        plugin,
+        toolNames: ["fuzz_move_delta"],
+        env: process.env,
+      }),
+    ).toBe(false);
+  });
+
   it("treats unreadable config signal objects as unavailable", () => {
     const config = {
       plugins: {

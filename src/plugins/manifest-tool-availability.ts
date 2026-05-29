@@ -360,12 +360,24 @@ function listToolAuthSignals(metadata: ToolMetadata): {
   signals: ManifestAuthAvailabilitySignal[];
   unreadable: boolean;
 } {
-  const authSignalEntries = readArrayField(metadata, "authSignals");
+  const rawAuthSignals = readRecordValueResult(metadata, "authSignals");
+  if (!rawAuthSignals.ok) {
+    return { signals: [], unreadable: true };
+  }
+  const hasAuthSignals = rawAuthSignals.value !== undefined;
+  if (hasAuthSignals && !Array.isArray(rawAuthSignals.value)) {
+    return { signals: [], unreadable: true };
+  }
+  const authSignalEntries = copyArrayEntriesResult(rawAuthSignals.value);
   if (!authSignalEntries.ok) {
     return { signals: [], unreadable: true };
   }
   let unreadable = false;
-  const authSignals = authSignalEntries.entries.filter(isRecord).flatMap((signal) => {
+  const authSignals = authSignalEntries.entries.flatMap((signal) => {
+    if (!isRecord(signal)) {
+      unreadable = true;
+      return [];
+    }
     const providerResult = readRecordValueResult(signal, "provider");
     const providerBaseUrlResult = readRecordValueResult(signal, "providerBaseUrl");
     if (!providerResult.ok || !providerBaseUrlResult.ok) {
@@ -374,6 +386,7 @@ function listToolAuthSignals(metadata: ToolMetadata): {
     }
     const provider = providerResult.value;
     if (typeof provider !== "string") {
+      unreadable = true;
       return [];
     }
     const providerBaseUrl = providerBaseUrlResult.value as
@@ -381,6 +394,9 @@ function listToolAuthSignals(metadata: ToolMetadata): {
       | undefined;
     return [{ provider, ...(providerBaseUrl ? { providerBaseUrl } : {}) }];
   });
+  if (hasAuthSignals) {
+    return { signals: authSignals, unreadable: unreadable || authSignals.length === 0 };
+  }
   if (authSignals.length > 0) {
     return { signals: authSignals, unreadable };
   }

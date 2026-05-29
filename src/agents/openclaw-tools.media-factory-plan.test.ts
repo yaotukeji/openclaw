@@ -549,6 +549,31 @@ describe("optional media tool factory planning", () => {
     ).toBe(true);
   });
 
+  it("fails closed when manifest capability auth signal entries are malformed", () => {
+    const config: OpenClawConfig = {};
+    installSnapshot(config, [
+      createPlugin({
+        id: "fuzzplugin",
+        contracts: { imageGenerationProviders: ["mockplugin"] },
+        setupProviders: [{ id: "mockplugin", envVars: ["MOCKPLUGIN_API_KEY"] }],
+        imageGenerationProviderMetadata: {
+          mockplugin: {
+            aliases: ["mockplugin"],
+            authSignals: [{}] as never,
+          },
+        },
+      }),
+    ]);
+    vi.stubEnv("MOCKPLUGIN_API_KEY", "mock-key");
+
+    expect(
+      resolveOptionalMediaToolFactoryPlan({
+        config,
+        authStore: createAuthStore(["mockplugin"]),
+      }).imageGenerate,
+    ).toBe(false);
+  });
+
   it("ignores unreadable configured vision provider maps on the media factory path", () => {
     const config = {
       models: {
