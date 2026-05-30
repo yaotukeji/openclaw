@@ -162,4 +162,24 @@ describe("local model lean tool filtering", () => {
       }).map((tool) => tool.name),
     ).toEqual(["read", "exec"]);
   });
+
+  it("keeps explicitly preserved runtime tools in lean mode", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          experimental: {
+            localModelLean: true,
+          },
+        },
+      },
+    };
+
+    expect(
+      filterLocalModelLeanTools({
+        tools: tools(["read", "browser", "cron", "message", "exec"]),
+        config: cfg,
+        preserveToolNames: ["message"],
+      }).map((tool) => tool.name),
+    ).toEqual(["read", "message", "exec"]);
+  });
 });

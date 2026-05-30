@@ -5,6 +5,17 @@ import type { AnyAgentTool } from "./agent-tools.types.js";
 
 const LOCAL_MODEL_LEAN_DENY_TOOL_NAMES = new Set(["browser", "cron", "message"]);
 
+function normalizePreservedLocalModelLeanToolNames(names?: Iterable<string>): Set<string> {
+  const preserved = new Set<string>();
+  for (const name of names ?? []) {
+    const normalized = name.trim();
+    if (normalized) {
+      preserved.add(normalized);
+    }
+  }
+  return preserved;
+}
+
 function resolveLocalModelLeanAgentId(params: {
   config?: OpenClawConfig;
   agentId?: string;
@@ -43,9 +54,13 @@ export function filterLocalModelLeanTools(params: {
   config?: OpenClawConfig;
   agentId?: string;
   sessionKey?: string;
+  preserveToolNames?: Iterable<string>;
 }): AnyAgentTool[] {
   if (!isLocalModelLeanEnabled(params)) {
     return params.tools;
   }
-  return params.tools.filter((tool) => !LOCAL_MODEL_LEAN_DENY_TOOL_NAMES.has(tool.name));
+  const preservedToolNames = normalizePreservedLocalModelLeanToolNames(params.preserveToolNames);
+  return params.tools.filter(
+    (tool) => preservedToolNames.has(tool.name) || !LOCAL_MODEL_LEAN_DENY_TOOL_NAMES.has(tool.name),
+  );
 }

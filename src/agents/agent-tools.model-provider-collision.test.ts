@@ -196,6 +196,35 @@ describe("applyModelProviderToolPolicy", () => {
     expect(toolNames(filtered)).toEqual(["read", "exec"]);
   });
 
+  it("keeps the message tool in lean local-model mode when source replies require it", () => {
+    const filtered = testing.applyModelProviderToolPolicy(
+      [
+        { name: "read" },
+        { name: "browser" },
+        { name: "cron" },
+        { name: "message" },
+        { name: "exec" },
+      ] as unknown as AnyAgentTool[],
+      {
+        config: {
+          agents: {
+            defaults: {
+              experimental: {
+                localModelLean: true,
+              },
+            },
+          },
+        },
+        modelProvider: "ollama",
+        modelApi: "openai-compatible",
+        modelId: "gemma3:4b",
+        sourceReplyDeliveryMode: "message_tool_only",
+      },
+    );
+
+    expect(toolNames(filtered)).toEqual(["read", "message", "exec"]);
+  });
+
   it("drops heavyweight tools when lean local-model mode is enabled for the default agent", () => {
     const filtered = testing.applyModelProviderToolPolicy(
       [

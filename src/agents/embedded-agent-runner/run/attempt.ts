@@ -1438,6 +1438,10 @@ export async function runEmbeddedAttempt(
       tools: [...tools, ...normalizedBundledTools],
       config: params.config,
       agentId: sessionAgentId,
+      preserveToolNames:
+        params.forceMessageTool === true || params.sourceReplyDeliveryMode === "message_tool_only"
+          ? ["message"]
+          : undefined,
     });
     const uncompactedToolSchemaProjection = filterRuntimeCompatibleTools(
       projectedUncompactedEffectiveTools,
@@ -1509,6 +1513,10 @@ export async function runEmbeddedAttempt(
       tools: toolSearch.tools,
       config: params.config,
       agentId: sessionAgentId,
+      preserveToolNames:
+        params.forceMessageTool === true || params.sourceReplyDeliveryMode === "message_tool_only"
+          ? ["message"]
+          : undefined,
     });
     const toolSearchSchemaProjection = filterRuntimeCompatibleTools(projectedToolSearchTools);
     logRuntimeToolSchemaQuarantine({
