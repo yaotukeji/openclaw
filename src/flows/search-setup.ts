@@ -11,6 +11,7 @@ import {
 } from "../config/types.secrets.js";
 import { normalizePluginsConfig, resolveEffectiveEnableState } from "../plugins/config-state.js";
 import { enablePluginInConfig } from "../plugins/enable.js";
+import type { PluginPackageInstall } from "../plugins/manifest.js";
 import type { PluginWebSearchProviderEntry } from "../plugins/types.js";
 import {
   resolveWebSearchInstallCatalogEntries,
@@ -20,6 +21,8 @@ import { resolvePluginWebSearchProviders } from "../plugins/web-search-providers
 import { sortWebSearchProviders } from "../plugins/web-search-providers.shared.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { normalizeTrimmedStringList } from "../shared/string-normalization.js";
+import { isRecord } from "../utils.js";
 import { t } from "../wizard/i18n/index.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import type { FlowContribution, FlowOption } from "./types.js";
@@ -49,6 +52,185 @@ const WEB_SEARCH_DOCS_URL = "https://docs.openclaw.ai/tools/web";
 type SearchProviderEntryWithInstall = PluginWebSearchProviderEntry & {
   [SEARCH_INSTALL_CATALOG_ENTRY]?: WebSearchInstallCatalogEntry;
 };
+
+function readRecordValue(record: unknown, field: string): unknown {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  try {
+    return record[field];
+  } catch {
+    return undefined;
+  }
+}
+
+function readStringField(record: unknown, field: string): string | undefined {
+  return normalizeOptionalString(readRecordValue(record, field));
+}
+
+function readNumberField(record: unknown, field: string): number | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "number" ? value : undefined;
+}
+
+function readFunctionField(record: unknown, field: string): unknown {
+  const value = readRecordValue(record, field);
+  return typeof value === "function" ? value : undefined;
+}
+
+function copyStringList(record: unknown, field: string): string[] {
+  return normalizeTrimmedStringList(readRecordValue(record, field));
+}
+
+function copyOnboardingScopes(provider: unknown): readonly "text-inference"[] | undefined {
+  const scopes = copyStringList(provider, "onboardingScopes").filter(
+    (scope): scope is "text-inference" => scope === "text-inference",
+  );
+  return scopes.length > 0 ? scopes : undefined;
+}
+
+function copyPluginPackageInstall(value: unknown): PluginPackageInstall | undefined {
+  const source = isRecord(value) ? value : undefined;
+  if (!source) {
+    return undefined;
+  }
+  const install: PluginPackageInstall = {};
+  const clawhubSpec = readStringField(source, "clawhubSpec");
+  const npmSpec = readStringField(source, "npmSpec");
+  const localPath = readStringField(source, "localPath");
+  const defaultChoice = readStringField(source, "defaultChoice");
+  const minHostVersion = readStringField(source, "minHostVersion");
+  const expectedIntegrity = readStringField(source, "expectedIntegrity");
+  if (clawhubSpec) {
+    install.clawhubSpec = clawhubSpec;
+  }
+  if (npmSpec) {
+    install.npmSpec = npmSpec;
+  }
+  if (localPath) {
+    install.localPath = localPath;
+  }
+  if (defaultChoice === "clawhub" || defaultChoice === "npm" || defaultChoice === "local") {
+    install.defaultChoice = defaultChoice;
+  }
+  if (minHostVersion) {
+    install.minHostVersion = minHostVersion;
+  }
+  if (expectedIntegrity) {
+    install.expectedIntegrity = expectedIntegrity;
+  }
+  if (readRecordValue(source, "allowInvalidConfigRecovery") === true) {
+    install.allowInvalidConfigRecovery = true;
+  }
+  return Object.keys(install).length > 0 ? install : undefined;
+}
+
+function copySearchProviderEntry(
+  provider: unknown,
+  fallbackPluginId?: string,
+): PluginWebSearchProviderEntry | undefined {
+  const id = readStringField(provider, "id");
+  const pluginId = readStringField(provider, "pluginId") ?? fallbackPluginId;
+  const label = readStringField(provider, "label");
+  const hint = readStringField(provider, "hint");
+  const requiresCredential = readRecordValue(provider, "requiresCredential") !== false;
+  const envVars = copyStringList(provider, "envVars");
+  const placeholder = readStringField(provider, "placeholder");
+  const signupUrl = readStringField(provider, "signupUrl");
+  const credentialPath = readStringField(provider, "credentialPath") ?? "";
+  if (
+    !id ||
+    !pluginId ||
+    !label ||
+    !hint ||
+    (requiresCredential && envVars.length === 0) ||
+    !placeholder ||
+    !signupUrl ||
+    (requiresCredential && !credentialPath)
+  ) {
+    return undefined;
+  }
+  const onboardingScopes = copyOnboardingScopes(provider);
+  const credentialLabel = readStringField(provider, "credentialLabel");
+  const authProviderId = readStringField(provider, "authProviderId");
+  const docsUrl = readStringField(provider, "docsUrl");
+  const credentialNote = readStringField(provider, "credentialNote");
+  const autoDetectOrder = readNumberField(provider, "autoDetectOrder");
+  return {
+    id,
+    pluginId,
+    label,
+    hint,
+    envVars,
+    placeholder,
+    signupUrl,
+    credentialPath,
+    ...(onboardingScopes ? { onboardingScopes } : {}),
+    ...(!requiresCredential ? { requiresCredential: false } : {}),
+    ...(credentialLabel ? { credentialLabel } : {}),
+    ...(authProviderId ? { authProviderId } : {}),
+    ...(docsUrl ? { docsUrl } : {}),
+    ...(credentialNote ? { credentialNote } : {}),
+    ...(autoDetectOrder !== undefined ? { autoDetectOrder } : {}),
+    inactiveSecretPaths: copyStringList(provider, "inactiveSecretPaths"),
+    getCredentialValue:
+      (readFunctionField(provider, "getCredentialValue") as
+        | PluginWebSearchProviderEntry["getCredentialValue"]
+        | undefined) ?? ((searchConfig?: Record<string, unknown>) => searchConfig?.apiKey),
+    setCredentialValue:
+      (readFunctionField(provider, "setCredentialValue") as
+        | PluginWebSearchProviderEntry["setCredentialValue"]
+        | undefined) ??
+      ((searchConfigTarget: Record<string, unknown>, value: unknown) => {
+        searchConfigTarget.apiKey = value;
+      }),
+    getConfiguredCredentialValue: readFunctionField(provider, "getConfiguredCredentialValue") as
+      | PluginWebSearchProviderEntry["getConfiguredCredentialValue"]
+      | undefined,
+    setConfiguredCredentialValue: readFunctionField(provider, "setConfiguredCredentialValue") as
+      | PluginWebSearchProviderEntry["setConfiguredCredentialValue"]
+      | undefined,
+    getConfiguredCredentialFallback: readFunctionField(
+      provider,
+      "getConfiguredCredentialFallback",
+    ) as PluginWebSearchProviderEntry["getConfiguredCredentialFallback"] | undefined,
+    applySelectionConfig: readFunctionField(provider, "applySelectionConfig") as
+      | PluginWebSearchProviderEntry["applySelectionConfig"]
+      | undefined,
+    runSetup: readFunctionField(provider, "runSetup") as
+      | PluginWebSearchProviderEntry["runSetup"]
+      | undefined,
+    resolveRuntimeMetadata: readFunctionField(provider, "resolveRuntimeMetadata") as
+      | PluginWebSearchProviderEntry["resolveRuntimeMetadata"]
+      | undefined,
+    createTool:
+      (readFunctionField(provider, "createTool") as
+        | PluginWebSearchProviderEntry["createTool"]
+        | undefined) ?? (() => null),
+  };
+}
+
+function copyInstallCatalogSearchProvider(
+  entry: unknown,
+): SearchProviderEntryWithInstall | undefined {
+  const pluginId = readStringField(entry, "pluginId");
+  const label = readStringField(entry, "label");
+  const install = copyPluginPackageInstall(readRecordValue(entry, "install"));
+  const provider = copySearchProviderEntry(readRecordValue(entry, "provider"), pluginId);
+  if (!pluginId || !label || !install || !provider) {
+    return undefined;
+  }
+  const installEntry: WebSearchInstallCatalogEntry = {
+    pluginId,
+    label,
+    install,
+    provider,
+    ...(readRecordValue(entry, "trustedSourceLinkedOfficialInstall") === true
+      ? { trustedSourceLinkedOfficialInstall: true }
+      : {}),
+  };
+  return { ...provider, [SEARCH_INSTALL_CATALOG_ENTRY]: installEntry };
+}
 
 function resolveSearchProviderCredentialLabel(
   entry: Pick<PluginWebSearchProviderEntry, "label" | "credentialLabel" | "requiresCredential">,
@@ -106,28 +288,32 @@ function resolveSearchProviderSetupContributions(
       config,
       env: process.env,
       mode: "setup",
+    }).flatMap((provider) => {
+      const copied = copySearchProviderEntry(provider);
+      return copied ? [copied] : [];
     }),
   );
   const seenProviderIds = new Set(runtimeProviders.map((provider) => provider.id));
   const seenPluginIds = new Set(runtimeProviders.map((provider) => provider.pluginId));
   const normalizedPluginsConfig = normalizePluginsConfig(config?.plugins);
-  const installCatalogProviders = resolveWebSearchInstallCatalogEntries()
-    .filter(
-      (entry) =>
-        !seenProviderIds.has(entry.provider.id) &&
-        !seenPluginIds.has(entry.pluginId) &&
-        resolveEffectiveEnableState({
-          id: entry.pluginId,
-          origin: "global",
-          config: normalizedPluginsConfig,
-          rootConfig: config,
-          enabledByDefault: true,
-        }).enabled,
-    )
-    .map(
-      (entry): SearchProviderEntryWithInstall =>
-        Object.assign({}, entry.provider, { [SEARCH_INSTALL_CATALOG_ENTRY]: entry }),
-    );
+  const installCatalogProviders = resolveWebSearchInstallCatalogEntries().flatMap((entry) => {
+    const provider = copyInstallCatalogSearchProvider(entry);
+    const installEntry = provider?.[SEARCH_INSTALL_CATALOG_ENTRY];
+    if (!provider || !installEntry) {
+      return [];
+    }
+    return !seenProviderIds.has(provider.id) &&
+      !seenPluginIds.has(installEntry.pluginId) &&
+      resolveEffectiveEnableState({
+        id: installEntry.pluginId,
+        origin: "global",
+        config: normalizedPluginsConfig,
+        rootConfig: config,
+        enabledByDefault: true,
+      }).enabled
+      ? [provider]
+      : [];
+  });
   const providers = sortWebSearchProviders([...runtimeProviders, ...installCatalogProviders]);
   return sortFlowContributionsByLabel(
     providers.filter(showsSearchProviderInSetup).map((provider) =>

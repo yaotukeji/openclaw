@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
 import { createNonExitingRuntime } from "../runtime.js";
 import { withEnvAsync } from "../test-utils/env.js";
-import { runSearchSetupFlow } from "./search-setup.js";
+import { listSearchProviderOptions, runSearchSetupFlow } from "./search-setup.js";
 
 const authMocks = vi.hoisted(() => ({
   hasAuthProfileForProvider: vi.fn((_params: { provider: string; type?: string }) => false),
@@ -103,8 +103,12 @@ const mockGrokProvider = vi.hoisted(() => ({
   },
 }));
 
+const webSearchRuntimeMocks = vi.hoisted(() => ({
+  resolvePluginWebSearchProviders: vi.fn(),
+}));
+
 vi.mock("../plugins/web-search-providers.runtime.js", () => ({
-  resolvePluginWebSearchProviders: () => [mockGrokProvider],
+  resolvePluginWebSearchProviders: webSearchRuntimeMocks.resolvePluginWebSearchProviders,
 }));
 
 const ensureOnboardingPluginInstalled = vi.hoisted(() =>
@@ -167,6 +171,8 @@ function latestPluginInstallRequest(): {
 describe("runSearchSetupFlow", () => {
   beforeEach(() => {
     ensureOnboardingPluginInstalled.mockClear();
+    webSearchRuntimeMocks.resolvePluginWebSearchProviders.mockReset();
+    webSearchRuntimeMocks.resolvePluginWebSearchProviders.mockReturnValue([mockGrokProvider]);
     authMocks.hasAuthProfileForProvider.mockReset();
     authMocks.hasAuthProfileForProvider.mockReturnValue(false);
   });
@@ -207,6 +213,63 @@ describe("runSearchSetupFlow", () => {
         ]),
       }),
     );
+  });
+
+  it("skips unreadable runtime provider rows while preserving healthy setup providers", () => {
+    const unreadableProvider = Object.defineProperty(
+      {
+        pluginId: "fuzzplugin",
+        label: "Fuzz Search",
+        hint: "Broken search setup",
+        envVars: ["FUZZPLUGIN_API_KEY"],
+        placeholder: "fuzz-...",
+        signupUrl: "https://fuzz.invalid/signup",
+        credentialPath: "plugins.entries.fuzzplugin.config.webSearch.apiKey",
+        onboardingScopes: ["text-inference"],
+      },
+      "id",
+      {
+        get() {
+          throw new Error("fuzzplugin provider id unavailable");
+        },
+      },
+    );
+    const mockProvider = {
+      id: "mocksearch",
+      pluginId: "mockplugin",
+      label: "Mock Search",
+      hint: "Mock search setup",
+      envVars: ["MOCKPLUGIN_API_KEY"],
+      placeholder: "mock-...",
+      signupUrl: "https://mock.invalid/signup",
+      credentialPath: "plugins.entries.mockplugin.config.webSearch.apiKey",
+      onboardingScopes: ["text-inference"],
+    };
+    const keylessProvider = {
+      id: "mockkeyless",
+      pluginId: "mockplugin-keyless",
+      label: "Mock Keyless Search",
+      hint: "Mock keyless search setup",
+      requiresCredential: false,
+      envVars: [],
+      placeholder: "(no key needed)",
+      signupUrl: "https://mock.invalid/keyless",
+      credentialPath: "",
+      onboardingScopes: ["text-inference"],
+    };
+    webSearchRuntimeMocks.resolvePluginWebSearchProviders.mockReturnValueOnce([
+      unreadableProvider,
+      mockProvider,
+      keylessProvider,
+    ]);
+
+    const providers = listSearchProviderOptions({
+      plugins: { allow: ["fuzzplugin", "mockplugin", "mockplugin-keyless"] },
+    });
+
+    expect(providers.some((provider) => provider.id === "mocksearch")).toBe(true);
+    expect(providers.some((provider) => provider.id === "mockkeyless")).toBe(true);
+    expect(providers.some((provider) => provider.pluginId === "fuzzplugin")).toBe(false);
   });
 
   it("runs provider-owned setup after selecting Grok web search", async () => {
