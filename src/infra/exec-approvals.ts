@@ -1471,13 +1471,17 @@ export function maxAsk(a: ExecAsk, b: ExecAsk): ExecAsk {
   return order[a] >= order[b] ? a : b;
 }
 
+/** Decisions a human approval surface can return for a pending exec request. */
 export type ExecApprovalDecision = "allow-once" | "allow-always" | "deny";
+
+/** Full decision set used when policy allows durable approval. */
 export const DEFAULT_EXEC_APPROVAL_DECISIONS = [
   "allow-once",
   "allow-always",
   "deny",
 ] as const satisfies readonly ExecApprovalDecision[];
 
+/** Resolves the decisions that should be offered for a policy ask mode. */
 export function resolveExecApprovalAllowedDecisions(params?: {
   ask?: string | null;
 }): readonly ExecApprovalDecision[] {
@@ -1488,6 +1492,7 @@ export function resolveExecApprovalAllowedDecisions(params?: {
   return DEFAULT_EXEC_APPROVAL_DECISIONS;
 }
 
+/** Returns explicit request decisions when present, otherwise falls back to ask-mode policy. */
 export function resolveExecApprovalRequestAllowedDecisions(params?: {
   ask?: string | null;
   allowedDecisions?: readonly ExecApprovalDecision[] | readonly string[] | null;
@@ -1501,6 +1506,7 @@ export function resolveExecApprovalRequestAllowedDecisions(params?: {
   return explicit.length > 0 ? explicit : resolveExecApprovalAllowedDecisions({ ask: params?.ask });
 }
 
+/** Checks whether a returned approval decision is allowed by the current ask policy. */
 export function isExecApprovalDecisionAllowed(params: {
   decision: ExecApprovalDecision;
   ask?: string | null;
@@ -1508,6 +1514,7 @@ export function isExecApprovalDecisionAllowed(params: {
   return resolveExecApprovalAllowedDecisions({ ask: params.ask }).includes(params.decision);
 }
 
+/** Sends an approval request over the local JSONL socket and waits for a decision response. */
 export async function requestExecApprovalViaSocket(params: {
   socketPath: string;
   token: string;
