@@ -22,10 +22,12 @@ export {
 } from "../infra/http-body.js";
 
 export const WEBHOOK_BODY_READ_DEFAULTS = Object.freeze({
+  /** Strict limit for unauthenticated requests before signature/auth checks complete. */
   preAuth: {
     maxBytes: 64 * 1024,
     timeoutMs: 5_000,
   },
+  /** Larger limit for handlers that already authenticated the webhook source. */
   postAuth: {
     maxBytes: 1024 * 1024,
     timeoutMs: 30_000,
@@ -33,7 +35,9 @@ export const WEBHOOK_BODY_READ_DEFAULTS = Object.freeze({
 });
 
 export const WEBHOOK_IN_FLIGHT_DEFAULTS = Object.freeze({
+  /** Maximum concurrent handlers for one resolved account, peer, route, or IP key. */
   maxInFlightPerKey: 8,
+  /** Upper bound on distinct active keys retained by the in-memory limiter. */
   maxTrackedKeys: 4_096,
 });
 
@@ -98,7 +102,9 @@ function respondWebhookBodyReadError(params: {
 
 /** Create an in-memory limiter that caps concurrent webhook handlers per key. */
 export function createWebhookInFlightLimiter(options?: {
+  /** Per-key concurrency cap; invalid values fall back to `WEBHOOK_IN_FLIGHT_DEFAULTS`. */
   maxInFlightPerKey?: number;
+  /** Maximum tracked key cardinality before old counters are pruned. */
   maxTrackedKeys?: number;
 }): WebhookInFlightLimiter {
   const maxInFlightPerKey = resolveWebhookIntegerOption(
@@ -161,10 +167,15 @@ export function isJsonContentType(value: string | string[] | undefined): boolean
 export function applyBasicWebhookRequestGuards(params: {
   req: IncomingMessage;
   res: ServerResponse;
+  /** Allowed methods. Empty or omitted means method checks are skipped. */
   allowMethods?: readonly string[];
+  /** Optional fixed-window limiter for coarse pre-body request throttling. */
   rateLimiter?: FixedWindowRateLimiter;
+  /** Stable limiter key, usually account, route, peer, or IP based. */
   rateLimitKey?: string;
+  /** Test hook for deterministic rate-limit windows. */
   nowMs?: number;
+  /** Require JSON media types for POST requests before reading the body. */
   requireJsonContentType?: boolean;
 }): boolean {
   const allowMethods = params.allowMethods?.length ? params.allowMethods : null;
@@ -208,8 +219,11 @@ export function beginWebhookRequestPipelineOrReject(params: {
   nowMs?: number;
   requireJsonContentType?: boolean;
   inFlightLimiter?: WebhookInFlightLimiter;
+  /** Key for concurrent handler accounting; omitted/empty keys intentionally skip this guard. */
   inFlightKey?: string;
+  /** Override status when the per-key in-flight guard rejects a request. */
   inFlightLimitStatusCode?: number;
+  /** Override response body when the per-key in-flight guard rejects a request. */
   inFlightLimitMessage?: string;
 }): { ok: true; release: () => void } | { ok: false } {
   if (
@@ -255,9 +269,13 @@ export function beginWebhookRequestPipelineOrReject(params: {
 export async function readWebhookBodyOrReject(params: {
   req: IncomingMessage;
   res: ServerResponse;
+  /** Explicit byte limit; positive finite values override the selected profile default. */
   maxBytes?: number;
+  /** Explicit read timeout; positive finite values override the selected profile default. */
   timeoutMs?: number;
+  /** Select strict pre-auth or larger post-auth default limits when no override is supplied. */
   profile?: WebhookBodyReadProfile;
+  /** Response body used for non-standard invalid-body failures. */
   invalidBodyMessage?: string;
 }): Promise<{ ok: true; value: string } | { ok: false }> {
   const limits = resolveWebhookBodyReadLimits({
@@ -289,10 +307,15 @@ export async function readWebhookBodyOrReject(params: {
 export async function readJsonWebhookBodyOrReject(params: {
   req: IncomingMessage;
   res: ServerResponse;
+  /** Explicit byte limit; positive finite values override the selected profile default. */
   maxBytes?: number;
+  /** Explicit read timeout; positive finite values override the selected profile default. */
   timeoutMs?: number;
+  /** Select strict pre-auth or larger post-auth default limits when no override is supplied. */
   profile?: WebhookBodyReadProfile;
+  /** Treat an empty request body as `{}` for webhook providers that omit JSON payloads. */
   emptyObjectOnEmpty?: boolean;
+  /** Response body used for malformed JSON or body-read failures. */
   invalidJsonMessage?: string;
 }): Promise<{ ok: true; value: unknown } | { ok: false }> {
   const limits = resolveWebhookBodyReadLimits({
