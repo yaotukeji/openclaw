@@ -39,6 +39,7 @@ function getBundledChannelSetupPromotionSurface(
   return asPromotionSurface(getBundledChannelPlugin(channelKey)?.setup);
 }
 
+/** Returns whether a root channel config key should move into the default account. */
 export function shouldMoveSingleAccountChannelKey(params: {
   channelKey: string;
   key: string;
@@ -61,6 +62,7 @@ export function shouldMoveSingleAccountChannelKey(params: {
   return false;
 }
 
+/** Resolves root channel config keys eligible for single-account promotion. */
 export function resolveSingleAccountKeysToMove(params: {
   channelKey: string;
   channel: Record<string, unknown>;
@@ -100,9 +102,11 @@ export function resolveSingleAccountKeysToMove(params: {
   if (!namedAccountPromotionKeys) {
     return keysToMove;
   }
+  // Once named accounts exist, plugin contracts may restrict which root keys remain promotable.
   return keysToMove.filter((key) => namedAccountPromotionKeys.includes(key));
 }
 
+/** Chooses the account id that should receive promoted single-account config. */
 export function resolveSingleAccountPromotionTarget(params: {
   channelKey: string;
   channel: ChannelSectionBase;
