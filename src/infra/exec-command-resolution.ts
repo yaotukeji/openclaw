@@ -9,6 +9,7 @@ import {
   resolveExecutablePathCandidate,
 } from "./executable-path.js";
 
+/** Resolved identity for one executable token used by execution or policy checks. */
 export type ExecutableResolution = {
   /** Executable token exactly as provided by the command or argv. */
   rawExecutable: string;
@@ -20,6 +21,7 @@ export type ExecutableResolution = {
   executableName: string;
 };
 
+/** Command target resolution split into runtime execution and approval policy views. */
 export type CommandResolution = {
   /** Runtime executable target after transparent wrapper unwrapping. */
   execution: ExecutableResolution;
@@ -290,7 +292,11 @@ export function resolveApprovalAuditTrustPath(
   return resolvePolicyTargetTrustPath(resolution, cwd);
 }
 
-/** @deprecated Use resolveExecutionTargetCandidatePath. */
+/**
+ * Returns the legacy execution-target candidate path used by older allowlist callers.
+ *
+ * @deprecated Use resolveExecutionTargetCandidatePath.
+ */
 export function resolveAllowlistCandidatePath(
   resolution: CommandResolution | ExecutableResolution | null,
   cwd?: string,
@@ -451,6 +457,7 @@ export function matchAllowlist(
   return pathOnlyMatch;
 }
 
+/** Normalized classification for a single argv token used by option scanners. */
 export type ExecArgvToken =
   | {
       kind: "empty";
