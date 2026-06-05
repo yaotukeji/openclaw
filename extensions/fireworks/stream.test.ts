@@ -100,6 +100,64 @@ describe("createFireworksKimiThinkingDisabledWrapper", () => {
     expect(k2p6Payload).toEqual({ thinking: { type: "disabled" } });
   });
 
+  it("overwrites hostile configurable thinking fields", () => {
+    const payload: Record<string, unknown> = {
+      reasoning_effort: "low",
+      reasoning: { effort: "low" },
+      reasoningEffort: "low",
+    };
+    Object.defineProperty(payload, "thinking", {
+      configurable: true,
+      get() {
+        throw new Error("thinking getter failed");
+      },
+    });
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      options?.onPayload?.(payload, _model);
+      return {} as ReturnType<StreamFn>;
+    };
+
+    const wrapped = createFireworksKimiThinkingDisabledWrapper(baseStreamFn);
+    expect(() =>
+      wrapped(
+        {
+          api: "openai-completions",
+          provider: "fireworks",
+          id: "accounts/fireworks/routers/kimi-k2p5-turbo",
+        } as Model<"openai-completions">,
+        { messages: [] } as Context,
+        {},
+      ),
+    ).not.toThrow();
+
+    expect(payload).toEqual({ thinking: { type: "disabled" } });
+  });
+
+  it("fails closed when Fireworks reasoning fields cannot be removed", () => {
+    const payload: Record<string, unknown> = {};
+    Object.defineProperty(payload, "reasoning", {
+      configurable: false,
+      value: { effort: "low" },
+    });
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      options?.onPayload?.(payload, _model);
+      return {} as ReturnType<StreamFn>;
+    };
+
+    const wrapped = createFireworksKimiThinkingDisabledWrapper(baseStreamFn);
+    expect(() =>
+      wrapped(
+        {
+          api: "openai-completions",
+          provider: "fireworks",
+          id: "accounts/fireworks/routers/kimi-k2p5-turbo",
+        } as Model<"openai-completions">,
+        { messages: [] } as Context,
+        {},
+      ),
+    ).toThrow("Fireworks payload field could not be removed: reasoning");
+  });
+
   it("passes sanitized payloads to caller onPayload hooks", () => {
     let callbackPayload: Record<string, unknown> = {};
     const baseStreamFn: StreamFn = (_model, _context, options) => {
