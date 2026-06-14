@@ -1,5 +1,6 @@
 // Codex tests cover native subagent monitor plugin behavior.
 import type {
+  AgentHarnessScopedSetDeliveryStatusParams,
   AgentHarnessTaskRecord,
   AgentHarnessTaskRuntimeScope,
 } from "openclaw/plugin-sdk/agent-harness-task-runtime";
@@ -127,7 +128,9 @@ function createRuntime() {
     recordTaskRunProgressByRunId: vi.fn(() => []),
     finalizeTaskRunByRunId: vi.fn(() => []),
     listTaskRecords: vi.fn((): AgentHarnessTaskRecord[] => []),
-    setDetachedTaskDeliveryStatusByRunId: vi.fn(() => []),
+    setDetachedTaskDeliveryStatusByRunId: vi.fn(
+      (_params: AgentHarnessScopedSetDeliveryStatusParams): AgentHarnessTaskRecord[] => [],
+    ),
   };
   return {
     ...taskRuntime,
