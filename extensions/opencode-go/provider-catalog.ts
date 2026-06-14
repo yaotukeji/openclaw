@@ -13,7 +13,7 @@ import type {
 
 const PROVIDER_ID = "opencode-go";
 
-export const OPENCODE_GO_OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1";
+const OPENCODE_GO_OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1";
 const OPENCODE_GO_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go";
 const OPENCODE_GO_KIMI_NO_REASONING_MODEL_IDS = new Set(["kimi-k2.5", "kimi-k2.6"]);
 const OPENCODE_GO_MODELS_ENDPOINT = "https://opencode.ai/zen/go/v1/models";
@@ -27,7 +27,7 @@ type OpencodeGoModelDefinition = ModelDefinitionConfig & {
   input: Array<"text" | "image">;
 };
 
-export const OPENCODE_GO_MODELS = (
+const OPENCODE_GO_MODELS = (
   [
     {
       id: "deepseek-v4-pro",
