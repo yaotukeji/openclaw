@@ -19,6 +19,10 @@ type ProtocolLevels = {
   max: number;
 };
 
+type LiteralUnionBranch = {
+  readonly const?: unknown;
+};
+
 const expectedLevels: ProtocolLevels = {
   min: MIN_CLIENT_PROTOCOL_VERSION,
   max: PROTOCOL_VERSION,
@@ -66,6 +70,25 @@ function assertPattern(
     return;
   }
   throw new Error(`${relativePath}: ${message}`);
+}
+
+function literalUnionBranches(schema: unknown): readonly LiteralUnionBranch[] | undefined {
+  if (!schema || typeof schema !== "object") {
+    return undefined;
+  }
+  const unionSchema = schema as {
+    readonly anyOf?: unknown;
+    readonly oneOf?: unknown;
+  };
+  const branches = Array.isArray(unionSchema.anyOf)
+    ? unionSchema.anyOf
+    : Array.isArray(unionSchema.oneOf)
+      ? unionSchema.oneOf
+      : undefined;
+  if (!branches || branches.length < 2) {
+    return undefined;
+  }
+  return branches as readonly LiteralUnionBranch[];
 }
 
 describe("native Gateway protocol levels", () => {
@@ -186,8 +209,8 @@ describe("native Gateway protocol levels", () => {
     const swiftGenerated = await readRepoFile(swiftGeneratedPath);
 
     for (const [name, schema] of Object.entries(ProtocolSchemas)) {
-      const branches = schema.anyOf ?? schema.oneOf;
-      if (!branches || branches.length < 2) {
+      const branches = literalUnionBranches(schema);
+      if (!branches) {
         continue;
       }
       const values = branches.map((branch) => branch.const);
