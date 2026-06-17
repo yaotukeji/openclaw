@@ -17,6 +17,7 @@ import type {
   BrowserContext,
   ConsoleMessage,
   Dialog,
+  Download,
   Page,
   Request,
   Response,
@@ -169,6 +170,18 @@ type PageState = {
   roleRefsFrameSelector?: string;
 };
 
+export type BrowserManagedDownload = {
+  url: string;
+  suggestedFilename: string;
+  path: string;
+};
+
+type ManagedDownloadPayload = {
+  url?: () => string;
+  suggestedFilename?: () => string;
+  saveAs?: (outPath: string) => Promise<void>;
+};
+
 type RoleRefs = NonNullable<PageState["roleRefs"]>;
 type RoleRefsCacheEntry = {
   refs: RoleRefs;
@@ -224,6 +237,102 @@ function buildManagedDownloadPath(fileName: string): string {
   const id = crypto.randomUUID();
   const safeName = sanitizeUntrustedFileName(fileName, "download.bin");
   return path.join(DEFAULT_DOWNLOAD_DIR, `${id}-${safeName}`);
+}
+
+async function saveManagedDownload(
+  download: ManagedDownloadPayload,
+): Promise<BrowserManagedDownload> {
+  const suggestedFilename = download.suggestedFilename?.() || "download.bin";
+  const managedPath = buildManagedDownloadPath(suggestedFilename);
+  await writeViaSiblingTempPath({
+    rootDir: DEFAULT_DOWNLOAD_DIR,
+    targetPath: managedPath,
+    writeTemp: async (tempPath) => {
+      await download.saveAs?.(tempPath);
+    },
+  });
+  return {
+    url: download.url?.() || "",
+    suggestedFilename,
+    path: managedPath,
+  };
+}
+
+export function createManagedPageDownloadWaiter(
+  page: Page,
+  opts: {
+    timeoutMs: number;
+    beforeSave?: (download: { url: string; suggestedFilename: string }) => Promise<void>;
+  },
+): {
+  promise: Promise<BrowserManagedDownload>;
+  cancel: () => void;
+  hasCaptured: () => boolean;
+} | null {
+  const state = ensurePageState(page);
+  if (state.downloadWaiterDepth > 0) {
+    return null;
+  }
+  state.downloadWaiterDepth += 1;
+  const armIdAtStart = state.armIdDownload;
+  let done = false;
+  let captured = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let handler: ((download: Download) => void) | undefined;
+
+  const cleanup = () => {
+    state.downloadWaiterDepth = Math.max(0, state.downloadWaiterDepth - 1);
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    if (handler) {
+      page.off("download", handler);
+      handler = undefined;
+    }
+  };
+
+  const promise = new Promise<BrowserManagedDownload>((resolve, reject) => {
+    handler = (download: Download) => {
+      if (done) {
+        return;
+      }
+      if (state.armIdDownload !== armIdAtStart) {
+        return;
+      }
+      done = true;
+      captured = true;
+      cleanup();
+      const suggestedFilename = download.suggestedFilename?.() || "download.bin";
+      Promise.resolve(opts.beforeSave?.({ url: download.url?.() || "", suggestedFilename }))
+        .then(async () => await saveManagedDownload(download))
+        .then(resolve, reject);
+    };
+
+    page.on("download", handler);
+    timer = setTimeout(() => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+      reject(new Error("Timeout waiting for download"));
+    }, opts.timeoutMs);
+    timer.unref?.();
+  });
+  promise.catch(() => {});
+
+  return {
+    promise,
+    cancel: () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+    },
+    hasCaptured: () => captured,
+  };
 }
 
 function hasCachedPlaywrightBrowserConnection(cdpUrl: string): boolean {
@@ -684,25 +793,12 @@ export function ensurePageState(page: Page): PageState {
         suggestedFilename?: () => string;
         saveAs?: (outPath: string) => Promise<void>;
         path?: () => Promise<string>;
+        url?: () => string;
       }) => {
         if (state.downloadWaiterDepth > 0) {
           return;
         }
-        const suggested = sanitizeUntrustedFileName(
-          download.suggestedFilename?.() || "download.bin",
-          "download.bin",
-        );
-        const managedPath = buildManagedDownloadPath(suggested);
-        const managedSave = (async () => {
-          await writeViaSiblingTempPath({
-            rootDir: DEFAULT_DOWNLOAD_DIR,
-            targetPath: managedPath,
-            writeTemp: async (tempPath) => {
-              await download.saveAs?.(tempPath);
-            },
-          });
-          return managedPath;
-        })();
+        const managedSave = saveManagedDownload(download).then((result) => result.path);
         managedSave.catch(() => {});
         download.path = async () => await managedSave;
       },

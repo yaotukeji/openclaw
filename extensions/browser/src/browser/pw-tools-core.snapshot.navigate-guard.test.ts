@@ -32,6 +32,39 @@ describe("pw-tools-core.snapshot navigate guard", () => {
     vi.unstubAllEnvs();
   });
 
+  function createNavigateDownloadPage(params: {
+    download?: {
+      url?: () => string;
+      suggestedFilename?: () => string;
+      path?: () => Promise<string>;
+    };
+    finalUrl?: string;
+  }) {
+    const downloadHandlers = new Set<(download: unknown) => void>();
+    const page = {
+      goto: vi.fn(async () => {
+        if (params.download) {
+          for (const handler of downloadHandlers) {
+            handler(params.download);
+          }
+        }
+        throw new Error("page.goto: net::ERR_ABORTED");
+      }),
+      on: vi.fn((event: string, handler: (download: unknown) => void) => {
+        if (event === "download") {
+          downloadHandlers.add(handler);
+        }
+      }),
+      off: vi.fn((event: string, handler: (download: unknown) => void) => {
+        if (event === "download") {
+          downloadHandlers.delete(handler);
+        }
+      }),
+      url: vi.fn(() => params.finalUrl ?? "about:blank"),
+    };
+    return { page, downloadHandlers };
+  }
+
   it("blocks unsupported non-network URLs before page lookup", async () => {
     const goto = vi.fn(async () => {});
     setPwToolsCoreCurrentPage({
@@ -82,6 +115,84 @@ describe("pw-tools-core.snapshot navigate guard", () => {
       targetId: undefined,
     });
     expect(result.url).toBe("https://example.com");
+  });
+
+  it("returns managed download metadata when a direct attachment navigation aborts", async () => {
+    const { page } = createNavigateDownloadPage({
+      download: {
+        url: () => "https://example.com/report.csv",
+        suggestedFilename: () => "report.csv",
+        path: async () => "/tmp/openclaw/downloads/report.csv",
+      },
+    });
+    setPwToolsCoreCurrentPage(page);
+
+    const result = await mod.navigateViaPlaywright({
+      cdpUrl: "http://127.0.0.1:18792",
+      targetId: "tab-1",
+      url: "https://example.com/report.csv",
+      ssrfPolicy: { allowPrivateNetwork: true },
+    });
+
+    expect(result).toEqual({
+      url: "https://example.com/report.csv",
+      download: {
+        url: "https://example.com/report.csv",
+        suggestedFilename: "report.csv",
+        path: "/tmp/openclaw/downloads/report.csv",
+      },
+    });
+    expect(getPwToolsCoreSessionMocks().assertPageNavigationCompletedSafely).not.toHaveBeenCalled();
+    expect(getPwToolsCoreSessionMocks().closeBlockedNavigationTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects a direct attachment download when the captured download URL violates policy", async () => {
+    const saveAs = vi.fn(async () => {});
+    const { page } = createNavigateDownloadPage({
+      download: {
+        url: () => "http://127.0.0.1:18080/private.csv",
+        suggestedFilename: () => "private.csv",
+        path: async () => {
+          await saveAs();
+          return "/tmp/openclaw/downloads/private.csv";
+        },
+      },
+    });
+    setPwToolsCoreCurrentPage(page);
+
+    await expect(
+      mod.navigateViaPlaywright({
+        cdpUrl: "http://127.0.0.1:18792",
+        targetId: "tab-1",
+        url: "https://example.com/private.csv",
+      }),
+    ).rejects.toBeInstanceOf(SsrFBlockedError);
+
+    expect(saveAs).not.toHaveBeenCalled();
+    expect(getPwToolsCoreSessionMocks().closeBlockedNavigationTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not capture direct attachment downloads while an explicit download waiter owns them", async () => {
+    const { page } = createNavigateDownloadPage({
+      download: {
+        url: () => "https://example.com/report.csv",
+        suggestedFilename: () => "report.csv",
+        path: async () => "/tmp/openclaw/downloads/report.csv",
+      },
+    });
+    setPwToolsCoreCurrentPage(page);
+    getPwToolsCoreSessionMocks().ensurePageState(page).downloadWaiterDepth = 1;
+
+    await expect(
+      mod.navigateViaPlaywright({
+        cdpUrl: "http://127.0.0.1:18792",
+        targetId: "tab-1",
+        url: "https://example.com/report.csv",
+      }),
+    ).rejects.toThrow("net::ERR_ABORTED");
+
+    expect(getPwToolsCoreSessionMocks().createManagedPageDownloadWaiter).toHaveReturnedWith(null);
+    expect(getPwToolsCoreSessionMocks().assertPageNavigationCompletedSafely).not.toHaveBeenCalled();
   });
 
   it("reconnects and retries once when navigation detaches frame", async () => {

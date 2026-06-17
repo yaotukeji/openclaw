@@ -5,6 +5,7 @@ import type { Page } from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_DOWNLOAD_DIR } from "./paths.js";
 import {
+  createManagedPageDownloadWaiter,
   ensurePageState,
   refLocator,
   rememberRoleRefsForTarget,
@@ -27,6 +28,7 @@ function fakePage(): {
   handlers: Map<string, Array<(...args: unknown[]) => void>>;
   mocks: {
     on: ReturnType<typeof vi.fn>;
+    off: ReturnType<typeof vi.fn>;
     getByRole: ReturnType<typeof vi.fn>;
     frameLocator: ReturnType<typeof vi.fn>;
     locator: ReturnType<typeof vi.fn>;
@@ -39,6 +41,14 @@ function fakePage(): {
     handlers.set(event, list);
     return undefined as unknown;
   });
+  const off = vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+    const list = handlers.get(event) ?? [];
+    handlers.set(
+      event,
+      list.filter((handler) => handler !== cb),
+    );
+    return undefined as unknown;
+  });
   const getByRole = vi.fn(() => ({ nth: vi.fn(() => ({ ok: true })) }));
   const frameLocator = vi.fn(() => ({
     getByRole: vi.fn(() => ({ nth: vi.fn(() => ({ ok: true })) })),
@@ -48,12 +58,13 @@ function fakePage(): {
 
   const page = {
     on,
+    off,
     getByRole,
     frameLocator,
     locator,
   } as unknown as Page;
 
-  return { page, handlers, mocks: { on, getByRole, frameLocator, locator } };
+  return { page, handlers, mocks: { on, off, getByRole, frameLocator, locator } };
 }
 
 function firstSavePath(saveAs: MutableDownload["saveAs"]): string {
@@ -237,6 +248,56 @@ describe("pw-session ensurePageState", () => {
 
     expect(download).not.toHaveProperty("path");
     expect(download.saveAs).not.toHaveBeenCalled();
+  });
+
+  it("lets a direct managed download waiter own and save the next download", async () => {
+    const { page, handlers } = fakePage();
+    const saveAs = vi.fn(async (outPath: string) => {
+      await fs.writeFile(outPath, "direct-download", "utf8");
+    });
+    const beforeSave = vi.fn(async () => {});
+
+    const waiter = createManagedPageDownloadWaiter(page, {
+      timeoutMs: 1000,
+      beforeSave,
+    });
+    expect(waiter).not.toBeNull();
+
+    handlers.get("download")?.[0]?.({
+      url: () => "https://example.com/report.pdf",
+      suggestedFilename: () => "report.pdf",
+      saveAs,
+    });
+
+    expect(waiter?.hasCaptured()).toBe(true);
+    const result = await waiter?.promise;
+
+    expect(beforeSave).toHaveBeenCalledWith({
+      url: "https://example.com/report.pdf",
+      suggestedFilename: "report.pdf",
+    });
+    expect(result?.url).toBe("https://example.com/report.pdf");
+    expect(result?.suggestedFilename).toBe("report.pdf");
+    expect(path.dirname(result?.path ?? "")).toBe(DEFAULT_DOWNLOAD_DIR);
+    await expect(fs.readFile(result?.path ?? "", "utf8")).resolves.toBe("direct-download");
+  });
+
+  it("does not arm a direct managed download waiter when another waiter owns downloads", () => {
+    const { page, handlers } = fakePage();
+    const state = ensurePageState(page);
+    state.downloadWaiterDepth = 1;
+    const download = {
+      url: () => "https://example.com/report.pdf",
+      suggestedFilename: () => "report.pdf",
+      saveAs: vi.fn(async () => {}),
+    };
+
+    const waiter = createManagedPageDownloadWaiter(page, { timeoutMs: 1000 });
+    handlers.get("download")?.[0]?.(download);
+
+    expect(waiter).toBeNull();
+    expect(download.saveAs).not.toHaveBeenCalled();
+    expect(state.downloadWaiterDepth).toBe(1);
   });
 
   it("tracks page errors and network requests (best-effort)", () => {

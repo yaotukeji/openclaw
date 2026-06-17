@@ -26,8 +26,10 @@ import {
 import {
   assertPageNavigationCompletedSafely,
   closeBlockedNavigationTarget,
+  createManagedPageDownloadWaiter,
   ensurePageState,
   forceDisconnectPlaywrightForTarget,
+  type BrowserManagedDownload,
   getPageForTargetId,
   gotoPageWithNavigationGuard,
   isPolicyDenyNavigationError,
@@ -52,6 +54,16 @@ function resolveSnapshotTimeoutMs(timeoutMs: number | undefined): number {
 
 function resolveNavigationTimeoutMs(timeoutMs: number | undefined): number {
   return resolveBoundedTimeoutMs(timeoutMs, 20_000, 1000, 120_000);
+}
+
+function isDownloadStartingNavigationAbort(err: unknown): boolean {
+  const msg =
+    typeof err === "string"
+      ? err.toLowerCase()
+      : err instanceof Error
+        ? err.message.toLowerCase()
+        : "";
+  return msg.includes("net::err_aborted") || msg.includes("download is starting");
 }
 
 function resolveViewportDimension(value: unknown, label: "width" | "height"): number {
@@ -386,7 +398,7 @@ export async function navigateViaPlaywright(opts: {
   timeoutMs?: number;
   ssrfPolicy?: SsrFPolicy;
   browserProxyMode?: BrowserNavigationPolicyOptions["browserProxyMode"];
-}): Promise<{ url: string }> {
+}): Promise<{ url: string; download?: BrowserManagedDownload }> {
   const isRetryableNavigateError = (err: unknown): boolean => {
     const msg =
       typeof err === "string"
@@ -413,19 +425,49 @@ export async function navigateViaPlaywright(opts: {
   const timeout = resolveNavigationTimeoutMs(opts.timeoutMs);
   let page = await getPageForTargetId(opts);
   ensurePageState(page);
-  const navigate = async () =>
-    await gotoPageWithNavigationGuard({
-      cdpUrl: opts.cdpUrl,
-      page,
-      url,
+  const navigate = async (): Promise<{
+    response: Awaited<ReturnType<typeof gotoPageWithNavigationGuard>>;
+    download?: BrowserManagedDownload;
+  }> => {
+    const downloadWaiter = createManagedPageDownloadWaiter(page, {
       timeoutMs: timeout,
-      ssrfPolicy: opts.ssrfPolicy,
-      browserProxyMode: opts.browserProxyMode,
-      targetId: opts.targetId,
+      beforeSave: async (download) => {
+        await assertBrowserNavigationAllowed({
+          url: download.url || url,
+          ...withBrowserNavigationPolicy(opts.ssrfPolicy, {
+            browserProxyMode: opts.browserProxyMode,
+          }),
+        });
+      },
     });
-  let response;
+    try {
+      const response = await gotoPageWithNavigationGuard({
+        cdpUrl: opts.cdpUrl,
+        page,
+        url,
+        timeoutMs: timeout,
+        ssrfPolicy: opts.ssrfPolicy,
+        browserProxyMode: opts.browserProxyMode,
+        targetId: opts.targetId,
+      });
+      downloadWaiter?.cancel();
+      return { response };
+    } catch (err) {
+      await Promise.resolve();
+      if (
+        downloadWaiter &&
+        isDownloadStartingNavigationAbort(err) &&
+        downloadWaiter.hasCaptured()
+      ) {
+        return { response: null, download: await downloadWaiter.promise };
+      }
+      downloadWaiter?.cancel();
+      throw err;
+    }
+  };
+  let result;
   try {
-    response = await navigate();
+    result = await navigate();
   } catch (err) {
     if (!isRetryableNavigateError(err)) {
       throw err;
@@ -434,19 +476,25 @@ export async function navigateViaPlaywright(opts: {
     // Force a clean reconnect, then retry once on the refreshed page handle.
     await forceDisconnectPlaywrightForTarget({
       cdpUrl: opts.cdpUrl,
-      targetId: opts.targetId,
       ssrfPolicy: opts.ssrfPolicy,
+      targetId: opts.targetId,
       reason: "retry navigate after detached frame",
     }).catch(() => {});
     page = await getPageForTargetId(opts);
     ensurePageState(page);
-    response = await navigate();
+    result = await navigate();
+  }
+  if (result.download) {
+    return {
+      url: result.download.url || url,
+      download: result.download,
+    };
   }
   try {
     await assertPageNavigationCompletedSafely({
       cdpUrl: opts.cdpUrl,
       page,
-      response,
+      response: result.response,
       ssrfPolicy: opts.ssrfPolicy,
       browserProxyMode: opts.browserProxyMode,
       targetId: opts.targetId,

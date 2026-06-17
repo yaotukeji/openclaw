@@ -29,6 +29,77 @@ const sessionMocks = vi.hoisted(() => ({
   }),
   ensurePageState: vi.fn(() => pageState),
   forceDisconnectPlaywrightForTarget: vi.fn(async () => {}),
+  createManagedPageDownloadWaiter: vi.fn(
+    (
+      page: {
+        on?: (event: string, handler: (download: unknown) => void) => void;
+        off?: (event: string, handler: (download: unknown) => void) => void;
+      },
+      opts: {
+        beforeSave?: (download: { url: string; suggestedFilename: string }) => Promise<void>;
+      },
+    ) => {
+      if (pageState.downloadWaiterDepth > 0) {
+        return null;
+      }
+      pageState.downloadWaiterDepth += 1;
+      const armIdAtStart = pageState.armIdDownload;
+      let captured: unknown;
+      let done = false;
+      let handler: ((download: unknown) => void) | undefined;
+      const cleanup = () => {
+        pageState.downloadWaiterDepth = Math.max(0, pageState.downloadWaiterDepth - 1);
+        if (handler) {
+          page.off?.("download", handler);
+          handler = undefined;
+        }
+      };
+      const promise = new Promise<{
+        url: string;
+        suggestedFilename: string;
+        path: string;
+      }>((resolve, reject) => {
+        handler = (download: unknown) => {
+          if (done) {
+            return;
+          }
+          if (pageState.armIdDownload !== armIdAtStart) {
+            return;
+          }
+          done = true;
+          captured = download;
+          cleanup();
+          const payload = download as {
+            url?: () => string;
+            suggestedFilename?: () => string;
+            path?: () => Promise<string>;
+          };
+          const url = payload.url?.() || "";
+          const suggestedFilename = payload.suggestedFilename?.() || "download.bin";
+          Promise.resolve(opts.beforeSave?.({ url, suggestedFilename }))
+            .then(async () => ({
+              url,
+              suggestedFilename,
+              path: (await payload.path?.()) || "/tmp/openclaw/downloads/mock-download.bin",
+            }))
+            .then(resolve, reject);
+        };
+        page.on?.("download", handler);
+      });
+      promise.catch(() => {});
+      return {
+        promise,
+        cancel: vi.fn(() => {
+          if (done) {
+            return;
+          }
+          done = true;
+          cleanup();
+        }),
+        hasCaptured: vi.fn(() => captured !== undefined),
+      };
+    },
+  ),
   gotoPageWithNavigationGuard: vi.fn(
     async (opts: {
       url: string;
