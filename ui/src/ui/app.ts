@@ -225,7 +225,6 @@ export class OpenClawApp extends LitElement {
   @state() loginShowGatewayPassword = false;
   @state() onboarding = resolveOnboardingMode();
   @state() connected = false;
-  @state() routeId: RouteId = "chat";
   @state() theme: ThemeName = this.settings.theme ?? "claw";
   @state() themeMode: ThemeMode = this.settings.themeMode ?? "system";
   @state() themeResolved: ResolvedTheme = "dark";
@@ -714,6 +713,15 @@ export class OpenClawApp extends LitElement {
   @state() logsMaxBytes = 250_000;
   @state() logsAtBottom = true;
 
+  get routeId(): RouteId {
+    const pathname = typeof window === "undefined" ? "" : window.location.pathname;
+    return (
+      appRouter.routeIdFromPath(pathname, this.basePath) ??
+      appRouter.getState().matches[0]?.routeId ??
+      "chat"
+    );
+  }
+
   client: GatewayBrowserClient | null = null;
   chatScrollFrame: number | null = null;
   chatScrollTimeout: number | null = null;
@@ -898,7 +906,7 @@ export class OpenClawApp extends LitElement {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
     refreshActiveFloatingTooltip(this);
     // Some render callbacks assign the active route while preparing nested panel state.
-    if (changed.has("routeId") && this.routeId !== "chat" && this.chatMobileControlsOpen) {
+    if (this.routeId !== "chat" && this.chatMobileControlsOpen) {
       this.setChatMobileControlsOpen(false);
     }
     if (
@@ -1002,7 +1010,6 @@ export class OpenClawApp extends LitElement {
       hash: "",
     };
     const routeState = appRouter.getState();
-    const previousRouteId = this.routeId;
     const activeMatch = routeState.matches[0];
     const revalidate = routeState.status === "success" && activeMatch?.routeId === next;
     const browserLocation = typeof window === "undefined" ? null : window.location;
@@ -1010,7 +1017,6 @@ export class OpenClawApp extends LitElement {
       (browserLocation?.pathname ?? routeState.resolvedLocation?.pathname) === location.pathname &&
       (browserLocation?.search ?? routeState.resolvedLocation?.search) === location.search &&
       (browserLocation?.hash ?? routeState.resolvedLocation?.hash) === location.hash;
-    this.routeId = next;
     void appRouter
       .navigate(
         next,
@@ -1021,14 +1027,7 @@ export class OpenClawApp extends LitElement {
         },
         location,
       )
-      .then(
-        () => {
-          this.routeId = next;
-        },
-        () => {
-          this.routeId = previousRouteId;
-        },
-      );
+      .catch(() => undefined);
     if (next !== "chat") {
       this.setChatMobileControlsOpen(false);
     }
