@@ -1,0 +1,67 @@
+github:
+  access_token: "${GITHUB_TOKEN}"
+  fork_owner: "xuwei-xy"
+
+# 支持多仓库配置
+repositories:
+  - owner: "openclaw"
+    repo: "openclaw"
+    branch: "main"
+    enabled: true
+    # 针对 monorepo 的特殊配置
+    large_project: true
+    test_timeout: 600
+    skip_shrinkwrap_check: false
+  - owner: "zeroclaw-labs"
+    repo: "zeroclaw"
+    branch: "master"
+    enabled: true
+
+task:
+  interval: 120
+  retry: 3
+  timeout: 600
+
+paths:
+  local_repo: "local_repo"
+  temp_backup: "temp_backup"
+  logs: "logs"
+  harness: ".harness"
+
+rules:
+  api_rate_limit: 30  # 降低API调用限制
+  api_interval_seconds: 3  # 增加API调用间隔到3秒
+  max_issue_body_lines: 200
+  blacklist_fail_threshold: 3
+  max_issues_per_round: 3  # 每轮最多处理3个issues
+
+# PR 规范配置
+pr_spec:
+  # Commit 信息格式: conventional / legacy
+  commit_format: "conventional"
+  # 模板分支
+  template_branch: "main"
+  # 是否强制检查 shrinkwrap
+  check_shrinkwrap: true
+
+# 交互配置
+interaction:
+  enabled: true
+  interval: 60  # 交互间隔（分钟）
+  max_issues_per_interaction: 5  # 每次交互最多处理5个issues
+  max_prs_per_interaction: 5  # 每次交互最多处理5个PRs
+  comment_templates:
+    issue:
+      - "Thanks for reporting this issue! I'll look into it."
+      - "Good catch! This looks like a valid bug report."
+      - "Thanks for the detailed report. Let me investigate this."
+    pr:
+      - "Thanks for the PR! I'll review it soon."
+      - "Great work! Let me check the changes."
+      - "Appreciate your contribution! Reviewing now."
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/app.log"

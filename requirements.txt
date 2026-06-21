@@ -1,0 +1,9 @@
+PyGithub>=2.1.1
+PyYAML>=6.0
+APScheduler>=3.10.4
+flake8>=6.1.0
+pylint>=3.0.0
+autopep8>=2.0.4
+tree-sitter>=0.20.4
+tree-sitter-python>=0.20.4
+requests>=2.31.0
