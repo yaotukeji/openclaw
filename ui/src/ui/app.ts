@@ -38,6 +38,7 @@ import {
   type ChatInputHistoryKeyInput,
   type ChatInputHistoryKeyResult,
 } from "../pages/chat/data.ts";
+import type { ChatSideResult } from "../pages/chat/side-result.ts";
 import type { ChatAttachment, ChatQueueItem } from "../pages/chat/types.ts";
 import { loadCronPage } from "../pages/cron/data.ts";
 import { DEFAULT_CRON_FORM } from "../pages/cron/data.ts";
@@ -105,7 +106,6 @@ import {
 } from "./chat/realtime-talk.ts";
 import type { ChatRunUiStatus } from "./chat/run-lifecycle.ts";
 import type { ChatMessageCache } from "./chat/session-message-cache.ts";
-import type { ChatSideResult } from "./chat/side-result.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
 import {
   dismissExecApprovalPrompt,
