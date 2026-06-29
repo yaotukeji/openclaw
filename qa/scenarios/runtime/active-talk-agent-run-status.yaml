@@ -1,0 +1,29 @@
+title: Active Talk agent-run control evidence
+
+scenario:
+  id: active-talk-agent-run-status
+  surface: voice-and-realtime-talk
+  category: voice-and-realtime-talk.realtime-talk-sessions
+  coverage:
+    primary:
+      - voice.active-talk-agent-run-status
+  objective: Link deterministic Talk active-run status, cancel, steer, and follow-up control coverage to realtime Talk maturity accounting.
+  successCriteria:
+    - Talk control phrases are classified conservatively into status, cancel, steer, and follow-up modes.
+    - Status reads active Talk tool progress without queueing another run.
+    - Cancel aborts the active embedded run without enqueueing steering.
+    - Steer and follow-up requests enqueue against the active embedded run with the expected control semantics.
+  docsRefs:
+    - docs/nodes/talk.md
+    - docs/gateway/protocol.md
+    - docs/help/testing.md
+  codeRefs:
+    - src/talk/agent-run-control.ts
+    - src/talk/agent-run-control-shared.ts
+    - src/talk/agent-run-control.test.ts
+    - src/gateway/server-methods/talk-session.ts
+    - src/gateway/server-methods/talk-client.ts
+  execution:
+    kind: vitest
+    path: src/talk/agent-run-control.test.ts
+    summary: Vitest coverage for active Talk run status, cancellation, steering, and follow-up controls.

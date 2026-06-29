@@ -1,0 +1,35 @@
+title: Voice Call CLI, RPC, and agent-tool evidence
+
+scenario:
+  id: voice-call-cli-rpc-agent-tool
+  surface: voice-call-channel
+  category: voice-call-channel.channel-setup-and-operations
+  coverage:
+    primary:
+      - voice-call.cli-rpc-agent-tool
+  objective: Link existing Voice Call CLI gateway fallback, Gateway continue operation, and realtime agent consult tool coverage to Voice Call maturity accounting.
+  successCriteria:
+    - CLI helpers treat unavailable Gateway connections as fallback candidates and cap Gateway operation timeouts.
+    - Gateway continue-call operations expose bounded async polling behavior.
+    - The realtime Voice Call runtime registers the openclaw_agent_consult tool.
+    - The consult tool invokes the routed embedded OpenClaw agent with voice session, channel, model, and tool policy context.
+  docsRefs:
+    - docs/cli/voicecall.md
+    - docs/plugins/voice-call.md
+    - docs/gateway/protocol.md
+    - docs/help/testing.md
+  codeRefs:
+    - test/e2e/qa-lab/channels/voice-call-cli-rpc-agent-tool.ts
+    - extensions/voice-call/src/cli.ts
+    - extensions/voice-call/src/cli.test.ts
+    - extensions/voice-call/src/gateway-continue-operation.test.ts
+    - extensions/voice-call/src/runtime.test.ts
+    - extensions/voice-call/src/response-generator.test.ts
+  execution:
+    kind: script
+    path: test/e2e/qa-lab/channels/voice-call-cli-rpc-agent-tool.ts
+    summary: Runs existing Voice Call CLI, Gateway operation, runtime consult, and response-generator tests and emits QA Lab evidence.
+    timeoutMs: 600000
+    args:
+      - --artifact-base
+      - ${outputDir}

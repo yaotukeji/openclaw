@@ -1,0 +1,26 @@
+title: Telegram bot token resolution evidence
+
+scenario:
+  id: telegram-bot-token
+  surface: telegram
+  category: telegram.channel-setup-and-operations
+  coverage:
+    primary:
+      - telegram.bot-token
+  objective: Link deterministic Telegram bot-token source resolution coverage to channel setup maturity accounting.
+  successCriteria:
+    - TELEGRAM_BOT_TOKEN is used when channel-level config is missing.
+    - Configured botToken values take precedence over environment fallback.
+    - tokenFile values are read for channel-level and account-scoped tokens.
+    - Account-scoped botToken and tokenFile values resolve without falling through to unrelated accounts.
+  docsRefs:
+    - docs/channels/telegram.md
+    - docs/plugins/reference/telegram.md
+    - docs/help/testing.md
+  codeRefs:
+    - extensions/telegram/src/token.ts
+    - extensions/telegram/src/token.test.ts
+  execution:
+    kind: vitest
+    path: extensions/telegram/src/token.test.ts
+    summary: Vitest coverage for TELEGRAM_BOT_TOKEN, botToken, tokenFile, and account-scoped token resolution.
