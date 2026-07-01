@@ -240,6 +240,35 @@ describe("routine service", () => {
     });
   });
 
+  it("materializes session-owned delivery to the last channel before cron validation", async () => {
+    await withOpenClawTestState({ prefix: "routine-delivery-session-last-" }, async () => {
+      const cron = createFakeCronService();
+      const validateCronCreate = vi.fn(async (input: CronJobCreate) => {
+        expect(input.delivery).toEqual({ mode: "announce", channel: "last" });
+      });
+
+      const created = await createRoutine(
+        createRoutineInput({
+          owner: { agentId: "ops", sessionKey: "session-1" },
+          target: {
+            sessionTarget: "isolated",
+            wakeMode: "now",
+          },
+        }),
+        { cron, validateCronCreate },
+      );
+
+      expect(cron.add.mock.calls[0]?.[0].delivery).toEqual({
+        mode: "announce",
+        channel: "last",
+      });
+      expect(created.routine.target.delivery).toEqual({
+        mode: "announce",
+        channel: "last",
+      });
+    });
+  });
+
   it("defaults keyless routines without delivery to no delivery", async () => {
     await withOpenClawTestState({ prefix: "routine-keyless-none-" }, async () => {
       const cron = createFakeCronService();
@@ -1093,14 +1122,41 @@ describe("routine service", () => {
     });
   });
 
+  it("persists disable intent before disarming an enabled backing cron job", async () => {
+    await withOpenClawTestState({ prefix: "routine-disable-stage-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), { cron });
+      const cronJobId = created.routine.trigger.cronJobId;
+      cron.update.mockRejectedValueOnce(new Error("interrupted before disable"));
+
+      await expect(setRoutineEnabled(created.routine.id, false, { cron })).rejects.toThrow(
+        "interrupted before disable",
+      );
+
+      expect(readStoredRoutineJson()).toMatchObject({
+        enabled: false,
+        disableStage: "disabling",
+      });
+      expect(cron.jobs.get(cronJobId)?.enabled).toBe(true);
+      cron.update.mockClear();
+
+      const replay = await setRoutineEnabled(created.routine.id, false, { cron });
+
+      expect(replay.changed).toBe(true);
+      expect(replay.routine.status.status).toBe("disabled");
+      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: false });
+      expect(readStoredRoutineJson()).not.toHaveProperty("disableStage");
+    });
+  });
+
   it.each([
     { initialEnabled: false, nextEnabled: true, label: "enable" },
     { initialEnabled: true, nextEnabled: false, label: "disable" },
   ])(
-    "rolls back backing cron $label when routine persistence fails",
+    "recovers staged backing cron $label when final routine persistence fails",
     async ({ initialEnabled, nextEnabled }) => {
       await withOpenClawTestState(
-        { prefix: `routine-toggle-rollback-${initialEnabled ? "on" : "off"}-` },
+        { prefix: `routine-toggle-stage-${initialEnabled ? "on" : "off"}-` },
         async () => {
           const cron = createFakeCronService();
           const created = await createRoutine(
@@ -1116,19 +1172,29 @@ describe("routine service", () => {
             throw new Error("expected backing cron job");
           }
           cron.update.mockClear();
-          const previousState = {
+          const concurrentState = {
             ...cronJob.state,
             lastRunAtMs: 1_700_000_123_000,
             lastRunStatus: "ok" as const,
             lastDurationMs: 42,
           };
-          cron.jobs.set(cronJobId, {
-            ...cronJob,
-            state: previousState,
+          let readCount = 0;
+          cron.readJob.mockImplementation(async (id: string) => {
+            const current = cron.jobs.get(id);
+            if (id === cronJobId) {
+              readCount += 1;
+              if (readCount === 2 && current) {
+                current.state = concurrentState;
+                current.updatedAtMs += 1;
+              }
+            }
+            return current;
           });
           openOpenClawStateDatabase().db.exec(`
-            CREATE TRIGGER routine_records_force_update_fail
+            CREATE TRIGGER routine_records_force_final_update_fail
             BEFORE UPDATE ON routine_records
+            WHEN NEW.routine_json NOT LIKE '%enableStage%'
+             AND NEW.routine_json NOT LIKE '%disableStage%'
             BEGIN
               SELECT RAISE(FAIL, 'forced routine update failure');
             END;
@@ -1136,91 +1202,32 @@ describe("routine service", () => {
 
           await expect(
             setRoutineEnabled(created.routine.id, nextEnabled, { cron }),
-          ).rejects.toThrow(
-            nextEnabled
-              ? "forced routine update failure"
-              : "failed to persist routine: forced routine update failure",
-          );
+          ).rejects.toThrow("failed to persist routine: forced routine update failure");
 
-          if (nextEnabled) {
-            expect(cron.update).not.toHaveBeenCalled();
-            expect(cron.jobs.get(cronJobId)?.enabled).toBe(initialEnabled);
-            await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
-              enabled: initialEnabled,
-            });
-            return;
-          }
-
+          const staged = readStoredRoutineJson(created.routine.id);
+          expect(staged).toMatchObject({
+            enabled: nextEnabled,
+            ...(nextEnabled ? { enableStage: "enabling" } : { disableStage: "disabling" }),
+          });
           expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: nextEnabled });
-          expect(cron.update).toHaveBeenCalledWith(cronJobId, {
-            enabled: initialEnabled,
-            schedule: cronJob.schedule,
-          });
-          expect(cron.update).toHaveBeenCalledWith(
-            cronJobId,
-            expect.objectContaining({
-              state: expect.objectContaining(previousState),
-            }),
-          );
-          expect(cron.jobs.get(cronJobId)?.enabled).toBe(initialEnabled);
-          expect(cron.jobs.get(cronJobId)?.state).toMatchObject(previousState);
-          expect(cron.jobs.get(cronJobId)?.state.nextRunAtMs).toBe(previousState.nextRunAtMs);
-          await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
-            enabled: initialEnabled,
-          });
-        },
+          expect(cron.jobs.get(cronJobId)?.enabled).toBe(nextEnabled);
+          expect(cron.jobs.get(cronJobId)?.state).toMatchObject(concurrentState);
+
+          openOpenClawStateDatabase().db.exec(`
+            DROP TRIGGER routine_records_force_final_update_fail;
+          `);
+          cron.update.mockClear();
+          const replay = await setRoutineEnabled(created.routine.id, nextEnabled, { cron });
+
+          expect(replay.changed).toBe(false);
+          expect(replay.routine.status.enabled).toBe(nextEnabled);
+          expect(cron.update).not.toHaveBeenCalled();
+          expect(readStoredRoutineJson(created.routine.id)).not.toHaveProperty("enableStage");
+          expect(readStoredRoutineJson(created.routine.id)).not.toHaveProperty("disableStage");
+        }
       );
     },
   );
-
-  it("preserves concurrent cron run state between toggle and rollback", async () => {
-    await withOpenClawTestState({ prefix: "routine-toggle-rollback-interleave-" }, async () => {
-      const cron = createFakeCronService();
-      const created = await createRoutine(createRoutineInput({ id: "toggle-interleave" }), {
-        cron,
-      });
-      const cronJobId = created.routine.trigger.cronJobId;
-      const cronJob = cron.jobs.get(cronJobId);
-      if (!cronJob) {
-        throw new Error("expected backing cron job");
-      }
-      const concurrentState = {
-        ...cronJob.state,
-        nextRunAtMs: 1_700_000_999_000,
-        runningAtMs: undefined,
-        lastRunAtMs: 1_700_000_998_000,
-        lastRunStatus: "error" as const,
-        lastError: "run failed after toggle",
-      };
-      let readCount = 0;
-      cron.readJob.mockImplementation(async (id: string) => {
-        const current = cron.jobs.get(id);
-        if (id === cronJobId) {
-          readCount += 1;
-          if (readCount === 2 && current) {
-            current.state = concurrentState;
-            current.updatedAtMs += 1;
-            return current;
-          }
-        }
-        return current;
-      });
-      openOpenClawStateDatabase().db.exec(`
-        CREATE TRIGGER routine_records_force_update_fail
-        BEFORE UPDATE ON routine_records
-        BEGIN
-          SELECT RAISE(FAIL, 'forced routine update failure');
-        END;
-      `);
-
-      await expect(setRoutineEnabled(created.routine.id, false, { cron })).rejects.toThrow(
-        "failed to persist routine: forced routine update failure",
-      );
-
-      expect(cron.jobs.get(cronJobId)?.enabled).toBe(true);
-      expect(cron.jobs.get(cronJobId)?.state).toMatchObject(concurrentState);
-    });
-  });
 
   it("preserves the routine record when backing cron removal fails", async () => {
     await withOpenClawTestState({ prefix: "routine-delete-failure-" }, async () => {

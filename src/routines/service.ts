@@ -15,8 +15,6 @@ import type {
   CronDeliveryStatus,
   CronJob,
   CronJobCreate,
-  CronJobPatch,
-  CronJobState,
   CronPayload,
   CronRunStatus,
   CronSchedule,
@@ -67,6 +65,7 @@ type RoutineRecord = {
 type RoutineStoredRecord = RoutineRecord & {
   createStage?: "creating";
   enableStage?: "enabling";
+  disableStage?: "disabling";
 };
 
 export type RoutineCreateInput = {
@@ -442,15 +441,16 @@ function normalizeRoutineDelivery(
   delivery: CronDelivery | undefined,
 ): CronDelivery | undefined {
   if (!delivery) {
-    return owner.sessionKey ? undefined : { mode: "none" };
+    return owner.sessionKey ? { mode: "announce", channel: "last" } : { mode: "none" };
   }
-  if (
-    (delivery.mode ?? "announce") === "announce" &&
-    !routineDeliveryHasStableTarget(owner, delivery)
-  ) {
+  const mode = delivery.mode ?? "announce";
+  if (mode === "announce" && !routineDeliveryHasStableTarget(owner, delivery)) {
     throw routineInvalidRequest(
       "routine announce delivery requires owner.sessionKey or delivery.to",
     );
+  }
+  if (mode === "announce" && owner.sessionKey && delivery.channel === undefined) {
+    return { ...delivery, mode: "announce", channel: "last" };
   }
   return delivery;
 }
@@ -718,7 +718,12 @@ function stageRoutineRecordForCreate(record: RoutineRecord): RoutineStoredRecord
 }
 
 function toPublicRoutineRecord(record: RoutineStoredRecord): RoutineRecord {
-  const { createStage: _createStage, enableStage: _enableStage, ...publicRecord } = record;
+  const {
+    createStage: _createStage,
+    enableStage: _enableStage,
+    disableStage: _disableStage,
+    ...publicRecord
+  } = record;
   return publicRecord;
 }
 
@@ -992,17 +997,21 @@ function isTerminalOneShotCronJob(cronJob: CronJob): boolean {
   );
 }
 
-function stageRoutineRecordForEnable(record: RoutineStoredRecord): RoutineStoredRecord {
+function stageRoutineRecordForToggle(record: RoutineStoredRecord, enabled: boolean): RoutineStoredRecord {
   return {
     ...toPublicRoutineRecord(record),
-    enabled: true,
+    enabled,
     updatedAtMs: Date.now(),
-    enableStage: "enabling",
+    ...(enabled ? { enableStage: "enabling" as const } : { disableStage: "disabling" as const }),
   };
 }
 
 function hasRoutineInternalStage(record: RoutineStoredRecord): boolean {
-  return record.createStage === "creating" || record.enableStage === "enabling";
+  return (
+    record.createStage === "creating" ||
+    record.enableStage === "enabling" ||
+    record.disableStage === "disabling"
+  );
 }
 
 async function persistRoutineRecordThenMaybeArm(params: {
@@ -1086,86 +1095,6 @@ async function routinePersistFailureError(params: {
   return (
     rollbackError ?? new Error(`failed to persist routine: ${formatErrorMessage(params.cause)}`)
   );
-}
-
-const ROUTINE_CRON_STATE_ROLLBACK_KEYS = [
-  "nextRunAtMs",
-  "runningAtMs",
-  "lastRunAtMs",
-  "lastRunStatus",
-  "lastStatus",
-  "lastError",
-  "lastDiagnostics",
-  "lastDiagnosticSummary",
-  "lastErrorReason",
-  "lastDurationMs",
-  "consecutiveErrors",
-  "consecutiveSkipped",
-  "lastFailureAlertAtMs",
-  "scheduleErrorCount",
-  "lastDeliveryStatus",
-  "lastDeliveryError",
-  "lastDelivered",
-  "lastFailureNotificationDelivered",
-  "lastFailureNotificationDeliveryStatus",
-  "lastFailureNotificationDeliveryError",
-] as const satisfies readonly (keyof CronJobState)[];
-
-function routineValuesEqual(left: unknown, right: unknown): boolean {
-  return stableStringify(left) === stableStringify(right);
-}
-
-function routineCronStateRollbackPatch(params: {
-  snapshot: CronJobState;
-  postToggle: CronJobState;
-  current: CronJobState;
-}): Partial<CronJobState> {
-  const patch: Record<string, unknown> = {};
-  for (const key of ROUTINE_CRON_STATE_ROLLBACK_KEYS) {
-    patch[key] = structuredClone(
-      routineValuesEqual(params.current[key], params.postToggle[key])
-        ? params.snapshot[key]
-        : params.current[key],
-    );
-  }
-  return patch as Partial<CronJobState>;
-}
-
-async function rollbackRoutineCronJobSnapshot(params: {
-  context: RoutineCronContext;
-  snapshot: CronJob;
-  postToggle: CronJob;
-  cause: unknown;
-}): Promise<Error | undefined> {
-  try {
-    const current = structuredClone(
-      (await params.context.cron.readJob(params.snapshot.id)) ?? params.postToggle,
-    );
-    const specPatch: CronJobPatch = {};
-    if (current.enabled === params.postToggle.enabled) {
-      specPatch.enabled = params.snapshot.enabled;
-    }
-    if (routineValuesEqual(current.schedule, params.postToggle.schedule)) {
-      specPatch.schedule = structuredClone(params.snapshot.schedule);
-    }
-    if (Object.keys(specPatch).length > 0) {
-      await params.context.cron.update(params.snapshot.id, specPatch);
-    }
-    await params.context.cron.update(params.snapshot.id, {
-      state: routineCronStateRollbackPatch({
-        snapshot: params.snapshot.state,
-        postToggle: params.postToggle.state,
-        current: current.state,
-      }),
-    });
-    return undefined;
-  } catch (rollbackErr) {
-    return new Error(
-      `failed to persist routine: ${formatErrorMessage(params.cause)}; failed to roll back backing cron job state: ${formatErrorMessage(
-        rollbackErr,
-      )}`,
-    );
-  }
 }
 
 export async function createRoutine(
@@ -1332,36 +1261,25 @@ export async function setRoutineEnabled(
         changed: false,
       };
     }
-    const previousCronJob = structuredClone(cronJob);
-    let postToggleCronJob = cronJob;
-    const stagedEnableRecord =
-      enabled && !cronJob.enabled ? stageRoutineRecordForEnable(record) : undefined;
-    if (stagedEnableRecord) {
-      upsertRoutineRecordToSqlite(stagedEnableRecord);
+    const shouldToggleCron = cronJob.enabled !== enabled;
+    const stagedToggleRecord = shouldToggleCron
+      ? stageRoutineRecordForToggle(record, enabled)
+      : undefined;
+    if (stagedToggleRecord) {
+      upsertRoutineRecordToSqlite(stagedToggleRecord);
     }
-    if (previousCronJob.enabled !== enabled) {
-      postToggleCronJob = structuredClone(await context.cron.update(cronJob.id, { enabled }));
+    if (shouldToggleCron) {
+      await context.cron.update(cronJob.id, { enabled });
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
     const updatedRecord = toPublicRoutineRecord({
-      ...(stagedEnableRecord ?? record),
+      ...(stagedToggleRecord ?? record),
       enabled,
       updatedAtMs: Date.now(),
     });
     try {
       upsertRoutineRecordToSqlite(updatedRecord);
     } catch (err) {
-      if (previousCronJob.enabled !== enabled) {
-        const rollbackError = await rollbackRoutineCronJobSnapshot({
-          context,
-          snapshot: previousCronJob,
-          postToggle: postToggleCronJob,
-          cause: err,
-        });
-        if (rollbackError) {
-          throw rollbackError;
-        }
-      }
       throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
     }
     return {
