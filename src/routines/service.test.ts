@@ -273,6 +273,43 @@ describe("routine service", () => {
     });
   });
 
+  it("infers the owner agent from agent-scoped session keys", async () => {
+    await withOpenClawTestState({ prefix: "routine-session-agent-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          owner: { sessionKey: "agent:ops:main" },
+        }),
+        { cron },
+      );
+
+      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
+        agentId: "ops",
+        sessionKey: "agent:ops:main",
+      });
+      expect(created.routine.owner).toEqual({
+        agentId: "ops",
+        sessionKey: "agent:ops:main",
+      });
+    });
+  });
+
+  it("rejects owner agent ids that conflict with agent-scoped session keys", async () => {
+    await withOpenClawTestState({ prefix: "routine-session-agent-conflict-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            owner: { agentId: "main", sessionKey: "agent:ops:main" },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("routine owner.agentId must match owner.sessionKey agent");
+      expect(cron.add).not.toHaveBeenCalled();
+    });
+  });
+
   it("validates cron delivery only before creating a new backing job", async () => {
     await withOpenClawTestState({ prefix: "routine-delivery-validate-replay-" }, async () => {
       const cron = createFakeCronService();

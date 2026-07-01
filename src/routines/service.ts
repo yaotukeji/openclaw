@@ -26,7 +26,7 @@ import type {
 import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
-import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../routing/session-key.js";
+import { DEFAULT_AGENT_ID, parseAgentSessionKey, sanitizeAgentId } from "../routing/session-key.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   openOpenClawStateDatabase,
@@ -352,9 +352,16 @@ function normalizeRoutineOwner(input: RoutineCreateInput): {
   sessionKey?: string;
 } {
   const rawAgentId = normalizeOptionalString(input.owner?.agentId);
+  const agentId = rawAgentId ? sanitizeAgentId(rawAgentId) : undefined;
   const sessionKey = normalizeOptionalString(input.owner?.sessionKey);
+  const parsedSessionAgentId = sessionKey ? parseAgentSessionKey(sessionKey)?.agentId : undefined;
+  const sessionAgentId = parsedSessionAgentId ? sanitizeAgentId(parsedSessionAgentId) : undefined;
+  if (agentId && sessionAgentId && agentId !== sessionAgentId) {
+    throw routineInvalidRequest("routine owner.agentId must match owner.sessionKey agent");
+  }
+  const resolvedAgentId = agentId ?? sessionAgentId;
   return {
-    ...(rawAgentId ? { agentId: sanitizeAgentId(rawAgentId) } : {}),
+    ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
     ...(sessionKey ? { sessionKey } : {}),
   };
 }
