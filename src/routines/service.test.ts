@@ -658,7 +658,7 @@ describe("routine service", () => {
     });
   });
 
-  it("adopts a disabled orphan backing cron job without arming it", async () => {
+  it("arms a staged orphan backing cron job when recovering default-enabled create", async () => {
     await withOpenClawTestState({ prefix: "routine-adopt-staged-orphan-" }, async () => {
       const cron = createFakeCronService();
       const input = createRoutineInput();
@@ -673,6 +673,36 @@ describe("routine service", () => {
         enabled: false,
         state: { ...cronJob.state, nextRunAtMs: undefined },
       });
+      openOpenClawStateDatabase().db.exec("DELETE FROM routine_records");
+      cron.update.mockClear();
+
+      const replay = await createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" });
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
+      expect(replay.routine.status.status).toBe("enabled");
+      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+      await expect(
+        inspectRoutine("daily-ops", { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).resolves.toMatchObject({
+        id: "daily-ops",
+        enabled: true,
+        status: { backing: "linked", enabled: true },
+      });
+    });
+  });
+
+  it("keeps explicitly disabled staged orphan backing cron jobs disabled", async () => {
+    await withOpenClawTestState({ prefix: "routine-adopt-disabled-staged-orphan-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({ enabled: false });
+      const created = await createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" });
+      const cronJobId = created.routine.trigger.cronJobId;
+      const cronJob = cron.jobs.get(cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      expect(cronJob.enabled).toBe(false);
       openOpenClawStateDatabase().db.exec("DELETE FROM routine_records");
       cron.update.mockClear();
 

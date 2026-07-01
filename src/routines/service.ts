@@ -1266,20 +1266,21 @@ export async function createRoutine(
       const existingBackingCronJob = await context.cron.readJob(draft.trigger.cronJobId);
       if (existingBackingCronJob) {
         assertRoutineBackingCronJobMatches(draft, normalized, existingBackingCronJob);
-        const adoptedRecord = createRoutineRecordForCronJob({
-          base: { ...draft, createdAtMs: existingBackingCronJob.createdAtMs },
+        const adopted = await persistRoutineRecordThenMaybeArm({
+          record: createRoutineRecordForCronJob({
+            base: { ...draft, createdAtMs: existingBackingCronJob.createdAtMs },
+            normalized,
+            cronJob: existingBackingCronJob,
+            enabled: normalized.enabled,
+            cronStorePath: context.cronStorePath,
+          }),
           normalized,
           cronJob: existingBackingCronJob,
-          enabled: existingBackingCronJob.enabled,
+          context,
           cronStorePath: context.cronStorePath,
         });
-        try {
-          upsertRoutineRecordToSqlite(adoptedRecord);
-        } catch (err) {
-          throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
-        }
         return {
-          routine: toRoutineView(adoptedRecord, existingBackingCronJob),
+          routine: toRoutineView(adopted.record, adopted.cronJob),
           created: false,
           idempotent: true,
         };
