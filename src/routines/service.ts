@@ -6,28 +6,22 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import type { Insertable, Selectable } from "kysely";
-import type {
-  RoutineRecord,
-  RoutineView,
-  RoutinesCreateParams,
-  RoutinesCreateResult,
-  RoutinesDeleteResult,
-  RoutinesListParams,
-  RoutinesSetEnabledResult,
-} from "../../packages/gateway-protocol/src/index.js";
 import { normalizeCronJobCreate } from "../cron/normalize.js";
 import { parseAbsoluteTimeMs } from "../cron/parse.js";
 import type { CronServiceContract } from "../cron/service-contract.js";
 import { cronStoreKey } from "../cron/store/key.js";
 import type {
   CronDelivery,
+  CronDeliveryStatus,
   CronJob,
   CronJobCreate,
   CronJobPatch,
   CronJobState,
   CronPayload,
+  CronRunStatus,
   CronSchedule,
   CronSessionTarget,
+  CronWakeMode,
 } from "../cron/types.js";
 import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -39,18 +33,95 @@ import {
   runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
 
-export type RoutineCreateInput = RoutinesCreateParams;
-export type RoutineListOptions = RoutinesListParams;
-type RoutineOwner = RoutineRecord["owner"];
-type RoutineTarget = RoutineRecord["target"];
+type RoutineOwner = {
+  agentId?: string;
+  sessionKey?: string;
+};
+
+type RoutineTarget = {
+  sessionTarget: CronSessionTarget;
+  wakeMode: CronWakeMode;
+  delivery?: CronDelivery;
+};
+
+type RoutineScheduleTrigger = {
+  kind: "schedule";
+  schedule: CronSchedule;
+  cronJobId: string;
+  cronStoreKey?: string;
+};
+
+type RoutineRecord = {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  owner: RoutineOwner;
+  target: RoutineTarget;
+  trigger: RoutineScheduleTrigger;
+  action: CronPayload;
+  createdAtMs: number;
+  updatedAtMs: number;
+};
+
 type RoutineStoredRecord = RoutineRecord & {
   createStage?: "creating";
   enableStage?: "enabling";
 };
-type RoutineRuntimeStatus = RoutineView["status"];
-type RoutineCreateResult = RoutinesCreateResult;
-type RoutineSetEnabledResult = RoutinesSetEnabledResult;
-type RoutineDeleteResult = RoutinesDeleteResult;
+
+export type RoutineCreateInput = {
+  id?: string;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  owner?: RoutineOwner;
+  target?: Partial<RoutineTarget>;
+  trigger: { kind: "schedule"; schedule: CronSchedule };
+  action: CronPayload;
+};
+
+export type RoutineListOptions = {
+  includeDisabled?: boolean;
+  agentId?: string;
+  query?: string;
+  limit?: number;
+  offset?: number;
+};
+
+type RoutineRuntimeStatus = {
+  status: "enabled" | "disabled" | "running" | "missing";
+  backing: "linked" | "missing";
+  enabled: boolean;
+  cronJobId?: string;
+  nextRunAtMs?: number;
+  runningAtMs?: number;
+  lastRunAtMs?: number;
+  lastRunStatus?: CronRunStatus;
+  lastError?: string;
+  lastDelivered?: boolean;
+  lastDeliveryStatus?: CronDeliveryStatus;
+  lastDeliveryError?: string;
+};
+
+type RoutineView = RoutineRecord & {
+  status: RoutineRuntimeStatus;
+};
+
+type RoutineCreateResult = {
+  routine: RoutineView;
+  created: boolean;
+  idempotent: boolean;
+};
+
+type RoutineSetEnabledResult = {
+  routine: RoutineView;
+  changed: boolean;
+};
+
+type RoutineDeleteResult = {
+  id: string;
+  deleted: boolean;
+};
 
 type RoutineCronContext = {
   cron: CronServiceContract;
