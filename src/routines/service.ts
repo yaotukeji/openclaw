@@ -991,44 +991,73 @@ async function routinePersistFailureError(params: {
   );
 }
 
-function routineCronStateRollbackPatch(state: CronJobState): Partial<CronJobState> {
-  return {
-    nextRunAtMs: state.nextRunAtMs,
-    runningAtMs: state.runningAtMs,
-    lastRunAtMs: state.lastRunAtMs,
-    lastRunStatus: state.lastRunStatus,
-    lastStatus: state.lastStatus,
-    lastError: state.lastError,
-    lastDiagnostics: structuredClone(state.lastDiagnostics),
-    lastDiagnosticSummary: state.lastDiagnosticSummary,
-    lastErrorReason: state.lastErrorReason,
-    lastDurationMs: state.lastDurationMs,
-    consecutiveErrors: state.consecutiveErrors,
-    consecutiveSkipped: state.consecutiveSkipped,
-    lastFailureAlertAtMs: state.lastFailureAlertAtMs,
-    scheduleErrorCount: state.scheduleErrorCount,
-    lastDeliveryStatus: state.lastDeliveryStatus,
-    lastDeliveryError: state.lastDeliveryError,
-    lastDelivered: state.lastDelivered,
-    lastFailureNotificationDelivered: state.lastFailureNotificationDelivered,
-    lastFailureNotificationDeliveryStatus: state.lastFailureNotificationDeliveryStatus,
-    lastFailureNotificationDeliveryError: state.lastFailureNotificationDeliveryError,
-  };
+const ROUTINE_CRON_STATE_ROLLBACK_KEYS = [
+  "nextRunAtMs",
+  "runningAtMs",
+  "lastRunAtMs",
+  "lastRunStatus",
+  "lastStatus",
+  "lastError",
+  "lastDiagnostics",
+  "lastDiagnosticSummary",
+  "lastErrorReason",
+  "lastDurationMs",
+  "consecutiveErrors",
+  "consecutiveSkipped",
+  "lastFailureAlertAtMs",
+  "scheduleErrorCount",
+  "lastDeliveryStatus",
+  "lastDeliveryError",
+  "lastDelivered",
+  "lastFailureNotificationDelivered",
+  "lastFailureNotificationDeliveryStatus",
+  "lastFailureNotificationDeliveryError",
+] as const satisfies readonly (keyof CronJobState)[];
+
+function routineValuesEqual(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function routineCronStateRollbackPatch(params: {
+  snapshot: CronJobState;
+  postToggle: CronJobState;
+  current: CronJobState;
+}): Partial<CronJobState> {
+  const patch: Record<string, unknown> = {};
+  for (const key of ROUTINE_CRON_STATE_ROLLBACK_KEYS) {
+    patch[key] = structuredClone(
+      routineValuesEqual(params.current[key], params.postToggle[key])
+        ? params.snapshot[key]
+        : params.current[key],
+    );
+  }
+  return patch as Partial<CronJobState>;
 }
 
 async function rollbackRoutineCronJobSnapshot(params: {
   context: RoutineCronContext;
   snapshot: CronJob;
+  postToggle: CronJob;
   cause: unknown;
 }): Promise<Error | undefined> {
   try {
-    const specPatch: CronJobPatch = {
-      enabled: params.snapshot.enabled,
-      schedule: structuredClone(params.snapshot.schedule),
-    };
-    await params.context.cron.update(params.snapshot.id, specPatch);
+    const current = (await params.context.cron.readJob(params.snapshot.id)) ?? params.postToggle;
+    const specPatch: CronJobPatch = {};
+    if (current.enabled === params.postToggle.enabled) {
+      specPatch.enabled = params.snapshot.enabled;
+    }
+    if (routineValuesEqual(current.schedule, params.postToggle.schedule)) {
+      specPatch.schedule = structuredClone(params.snapshot.schedule);
+    }
+    if (Object.keys(specPatch).length > 0) {
+      await params.context.cron.update(params.snapshot.id, specPatch);
+    }
     await params.context.cron.update(params.snapshot.id, {
-      state: routineCronStateRollbackPatch(params.snapshot.state),
+      state: routineCronStateRollbackPatch({
+        snapshot: params.snapshot.state,
+        postToggle: params.postToggle.state,
+        current: current.state,
+      }),
     });
     return undefined;
   } catch (rollbackErr) {
@@ -1184,8 +1213,9 @@ export async function setRoutineEnabled(
       };
     }
     const previousCronJob = structuredClone(cronJob);
+    let postToggleCronJob = cronJob;
     if (previousCronJob.enabled !== enabled) {
-      await context.cron.update(cronJob.id, { enabled });
+      postToggleCronJob = await context.cron.update(cronJob.id, { enabled });
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
     const updatedRecord = {
@@ -1200,6 +1230,7 @@ export async function setRoutineEnabled(
         const rollbackError = await rollbackRoutineCronJobSnapshot({
           context,
           snapshot: previousCronJob,
+          postToggle: updatedCronJob ?? postToggleCronJob,
           cause: err,
         });
         if (rollbackError) {

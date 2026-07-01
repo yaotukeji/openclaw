@@ -952,6 +952,59 @@ describe("routine service", () => {
     },
   );
 
+  it("preserves concurrent cron run state when toggle persistence rollback runs", async () => {
+    await withOpenClawTestState({ prefix: "routine-toggle-rollback-interleave-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput({ id: "toggle-interleave" }), {
+        cron,
+      });
+      const cronJobId = created.routine.trigger.cronJobId;
+      const cronJob = cron.jobs.get(cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      const concurrentState = {
+        ...cronJob.state,
+        nextRunAtMs: 1_700_000_999_000,
+        runningAtMs: undefined,
+        lastRunAtMs: 1_700_000_998_000,
+        lastRunStatus: "error" as const,
+        lastError: "run failed after toggle",
+      };
+      let readCount = 0;
+      cron.readJob.mockImplementation(async (id: string) => {
+        const current = cron.jobs.get(id);
+        if (id === cronJobId) {
+          readCount += 1;
+          if (readCount === 3 && current) {
+            const concurrent = {
+              ...current,
+              state: concurrentState,
+              updatedAtMs: current.updatedAtMs + 1,
+            };
+            cron.jobs.set(id, concurrent);
+            return concurrent;
+          }
+        }
+        return current;
+      });
+      openOpenClawStateDatabase().db.exec(`
+        CREATE TRIGGER routine_records_force_update_fail
+        BEFORE UPDATE ON routine_records
+        BEGIN
+          SELECT RAISE(FAIL, 'forced routine update failure');
+        END;
+      `);
+
+      await expect(setRoutineEnabled(created.routine.id, false, { cron })).rejects.toThrow(
+        "failed to persist routine: forced routine update failure",
+      );
+
+      expect(cron.jobs.get(cronJobId)?.enabled).toBe(true);
+      expect(cron.jobs.get(cronJobId)?.state).toMatchObject(concurrentState);
+    });
+  });
+
   it("preserves the routine record when backing cron removal fails", async () => {
     await withOpenClawTestState({ prefix: "routine-delete-failure-" }, async () => {
       const cron = createFakeCronService();
