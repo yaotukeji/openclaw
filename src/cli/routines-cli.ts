@@ -150,6 +150,13 @@ function normalizeRoutineIdOption(value: unknown): string | undefined {
   return id;
 }
 
+function hasExplicitSessionDeliveryTarget(sessionTarget: string): boolean {
+  return (
+    normalizeLowercaseStringOrEmpty(sessionTarget).startsWith("session:") &&
+    Boolean(normalizeOptionalString(sessionTarget.slice("session:".length)))
+  );
+}
+
 function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarget: string) {
   const webhookUrl = normalizeOptionalString(opts.webhook);
   const hasWebhook = typeof opts.webhook === "string";
@@ -171,9 +178,11 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
   if (hasWebhook && hasChatDeliveryTarget) {
     throw new Error("--webhook cannot be combined with chat delivery options.");
   }
-  const hasStableAnnounceRecipient = Boolean(sessionKey) || Boolean(to);
+  const hasSessionDeliveryTarget =
+    Boolean(sessionKey) || hasExplicitSessionDeliveryTarget(sessionTarget);
+  const hasStableAnnounceRecipient = hasSessionDeliveryTarget || Boolean(to);
   if ((hasAnnounce || hasChatDeliveryTarget) && !hasStableAnnounceRecipient) {
-    throw new Error("Announce delivery requires --to or --session-key.");
+    throw new Error("Announce delivery requires --to, --session, or --session-key.");
   }
   if (payload.kind === "systemEvent" || sessionTarget === "main") {
     if (deliveryFlagCount > 0 || hasChatDeliveryTarget) {
@@ -194,7 +203,7 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
     mode: deliveryMode,
     channel: hasWebhook
       ? undefined
-      : (channel ?? (deliveryMode === "announce" && sessionKey ? "last" : undefined)),
+      : (channel ?? (deliveryMode === "announce" && hasSessionDeliveryTarget ? "last" : undefined)),
     to: hasWebhook ? webhookUrl : to,
     threadId: hasWebhook ? undefined : threadId,
     accountId: hasWebhook ? undefined : accountId,

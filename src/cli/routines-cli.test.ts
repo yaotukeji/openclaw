@@ -115,6 +115,35 @@ describe("registerRoutinesCli", () => {
     });
   });
 
+  it("uses explicit session targets as stable announce recipients", async () => {
+    for (const extraArgs of [[], ["--announce"]]) {
+      await runRoutinesCommand([
+        "routines",
+        "create",
+        "+1h",
+        "check status",
+        "--name",
+        "Session target delivery",
+        "--session",
+        "session:agent:ops:main",
+        ...extraArgs,
+      ]);
+
+      const createCall = callGatewayFromCli.mock.calls.find(
+        (call) => call[0] === "routines.create",
+      );
+      const params = createCall?.[2] as {
+        target?: { sessionTarget?: string; delivery?: { mode?: string; channel?: string } };
+      };
+
+      expect(params?.target?.sessionTarget).toBe("session:agent:ops:main");
+      expect(params?.target?.delivery).toMatchObject({
+        mode: "announce",
+        channel: "last",
+      });
+    }
+  });
+
   it("leaves keyless explicit destinations for gateway channel validation", async () => {
     await runRoutinesCommand([
       "routines",
@@ -154,7 +183,7 @@ describe("registerRoutinesCli", () => {
 
     expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(false);
     expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain(
-      "Announce delivery requires --to or --session-key.",
+      "Announce delivery requires --to, --session, or --session-key.",
     );
   });
 
