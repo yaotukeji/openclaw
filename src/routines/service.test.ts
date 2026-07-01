@@ -178,6 +178,21 @@ describe("routine service", () => {
     });
   });
 
+  it("validates cron delivery only before creating a new backing job", async () => {
+    await withOpenClawTestState({ prefix: "routine-delivery-validate-replay-" }, async () => {
+      const cron = createFakeCronService();
+      const validateCronCreate = vi.fn(async () => undefined);
+      await createRoutine(createRoutineInput(), { cron, validateCronCreate });
+      validateCronCreate.mockRejectedValueOnce(new Error("delivery unavailable"));
+
+      const replay = await createRoutine(createRoutineInput(), { cron, validateCronCreate });
+
+      expect(replay.idempotent).toBe(true);
+      expect(validateCronCreate).toHaveBeenCalledTimes(1);
+      expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("rejects blank explicit routine ids instead of generating a new id", async () => {
     await withOpenClawTestState({ prefix: "routine-blank-id-" }, async () => {
       const cron = createFakeCronService();
@@ -185,6 +200,30 @@ describe("routine service", () => {
       await expect(createRoutine(createRoutineInput({ id: "   " }), { cron })).rejects.toThrow(
         "routine id must not be blank",
       );
+
+      expect(cron.add).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects payloads that normalize to empty text before creating cron jobs", async () => {
+    await withOpenClawTestState({ prefix: "routine-blank-action-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(
+        createRoutine(createRoutineInput({ action: { kind: "agentTurn", message: "   " } }), {
+          cron,
+        }),
+      ).rejects.toThrow("routine agent message must not be blank");
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "blank-event",
+            target: { sessionTarget: "main", wakeMode: "now" },
+            action: { kind: "systemEvent", text: "\n\t" },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("routine system event text must not be blank");
 
       expect(cron.add).not.toHaveBeenCalled();
     });
@@ -374,7 +413,7 @@ describe("routine service", () => {
     });
   });
 
-  it("keeps stored disabled state when recreating a missing backing job", async () => {
+  it("returns missing status without recreating a missing backing job", async () => {
     await withOpenClawTestState({ prefix: "routine-missing-disabled-" }, async () => {
       const cron = createFakeCronService();
       const created = await createRoutine(createRoutineInput({ enabled: false }), { cron });
@@ -384,7 +423,14 @@ describe("routine service", () => {
 
       expect(replay.idempotent).toBe(true);
       expect(replay.created).toBe(false);
-      expect(cron.jobs.get(created.routine.trigger.cronJobId)?.enabled).toBe(false);
+      expect(replay.routine.enabled).toBe(false);
+      expect(replay.routine.status).toMatchObject({
+        status: "missing",
+        backing: "missing",
+        cronJobId: created.routine.trigger.cronJobId,
+      });
+      expect(cron.add).toHaveBeenCalledTimes(1);
+      expect(cron.jobs.has(created.routine.trigger.cronJobId)).toBe(false);
     });
   });
 
@@ -502,8 +548,8 @@ describe("routine service", () => {
       const cron = createFakeCronService();
       const created = await createRoutine(createRoutineInput(), { cron });
 
-      const disabled = await setRoutineEnabled(created.routine.id, false, { cron });
-      const disabledAgain = await setRoutineEnabled(created.routine.id, false, { cron });
+      const disabled = await setRoutineEnabled(` ${created.routine.id} `, false, { cron });
+      const disabledAgain = await setRoutineEnabled(` ${created.routine.id} `, false, { cron });
 
       expect(cron.update).toHaveBeenCalledTimes(1);
       expect(cron.update).toHaveBeenCalledWith(created.routine.trigger.cronJobId, {
@@ -513,8 +559,8 @@ describe("routine service", () => {
       expect(disabled.routine.status.status).toBe("disabled");
       expect(disabledAgain.changed).toBe(false);
 
-      const deleted = await deleteRoutine(created.routine.id, { cron });
-      const deletedAgain = await deleteRoutine(created.routine.id, { cron });
+      const deleted = await deleteRoutine(` ${created.routine.id} `, { cron });
+      const deletedAgain = await deleteRoutine(` ${created.routine.id} `, { cron });
 
       expect(deleted).toEqual({ id: "daily-ops", deleted: true });
       expect(deletedAgain).toEqual({ id: "daily-ops", deleted: false });

@@ -16,7 +16,6 @@ import {
   deleteRoutine,
   inspectRoutine,
   listRoutines,
-  normalizeRoutineCronCreateInput,
   setRoutineEnabled,
   type RoutineCreateInput,
 } from "../../routines/service.js";
@@ -67,26 +66,15 @@ export const routinesHandlers: GatewayRequestHandlers = {
       respondValidationFailure(respond, "routines.create", validateRoutinesCreateParams.errors);
       return;
     }
-    const input = params as RoutineCreateInput & { target?: { delivery?: unknown } };
-    try {
-      assertCronDeliveryInputNonBlankFields(input.target?.delivery);
-    } catch (err) {
-      respondInvalid(respond, "routines.create", formatErrorMessage(err));
-      return;
-    }
-    try {
-      await assertValidCronCreateDelivery(
-        context.getRuntimeConfig(),
-        normalizeRoutineCronCreateInput(input),
-      );
-    } catch (err) {
-      respondInvalid(respond, "routines.create", formatErrorMessage(err));
-      return;
-    }
+    const input = params as RoutineCreateInput;
     try {
       const result = await createRoutine(input, {
         cron: context.cron,
         cronStorePath: context.cronStorePath,
+        validateCronCreate: async (cronInput) => {
+          assertCronDeliveryInputNonBlankFields(cronInput.delivery);
+          await assertValidCronCreateDelivery(context.getRuntimeConfig(), cronInput);
+        },
       });
       context.logGateway.info("routines: routine created", {
         routineId: result.routine.id,

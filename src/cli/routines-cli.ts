@@ -182,12 +182,13 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
       : hasAnnounce
         ? "announce"
         : undefined;
-  if (!mode && !hasChatDeliveryTarget) {
-    return undefined;
-  }
+  const deliveryMode = mode ?? "announce";
+  const channel = normalizeOptionalString(opts.channel);
   return {
-    mode: mode ?? "announce",
-    channel: hasWebhook ? undefined : normalizeOptionalString(opts.channel),
+    mode: deliveryMode,
+    channel: hasWebhook
+      ? undefined
+      : (channel ?? (deliveryMode === "announce" ? "last" : undefined)),
     to: hasWebhook ? webhookUrl : normalizeOptionalString(opts.to),
     threadId: hasWebhook ? undefined : threadId,
     accountId: hasWebhook ? undefined : accountId,

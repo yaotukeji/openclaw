@@ -119,6 +119,7 @@ type RoutineDeleteResult = {
 type RoutineCronContext = {
   cron: CronServiceContract;
   cronStorePath?: string;
+  validateCronCreate?: (input: CronJobCreate) => void | Promise<void>;
 };
 
 type RoutineRecordsTable = OpenClawStateKyselyDatabase["routine_records"];
@@ -325,6 +326,10 @@ function normalizeRoutineId(value: string | undefined): string {
   if (value === undefined) {
     return createRoutineId();
   }
+  return normalizeExistingRoutineId(value);
+}
+
+function normalizeExistingRoutineId(value: string): string {
   const normalized = normalizeOptionalString(value);
   if (!normalized) {
     throw new Error("routine id must not be blank");
@@ -351,6 +356,15 @@ function normalizeRoutineOwner(input: RoutineCreateInput): {
 
 function inferSessionTarget(payload: CronPayload): CronSessionTarget {
   return payload.kind === "systemEvent" ? "main" : "isolated";
+}
+
+function assertRoutinePayloadNonBlank(payload: CronPayload): void {
+  if (payload.kind === "agentTurn" && !normalizeOptionalString(payload.message)) {
+    throw new Error("routine agent message must not be blank");
+  }
+  if (payload.kind === "systemEvent" && !normalizeOptionalString(payload.text)) {
+    throw new Error("routine system event text must not be blank");
+  }
 }
 
 function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRoutineCreate {
@@ -385,6 +399,7 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
     throw new Error("invalid routine schedule or action");
   }
   const cronInputWithId = { ...cronInput, id: createRoutineCronJobId(id) };
+  assertRoutinePayloadNonBlank(cronInputWithId.payload);
   if (cronInputWithId.sessionTarget === "main" && cronInputWithId.delivery?.mode === "webhook") {
     throw new Error("main-session routines do not support webhook delivery");
   }
@@ -722,31 +737,28 @@ export async function createRoutine(
       ) {
         throw new Error(`routine id already exists with different intent: ${normalized.id}`);
       }
-      const cronJob =
-        existingCronJob ??
-        (await ensureRoutineBackingCronJob({
-          record: existing,
-          normalized: {
-            ...normalized,
-            enabled: existing.enabled,
-            cronInput: { ...normalized.cronInput, enabled: existing.enabled },
-          },
-          context,
-        }));
+      if (!existingCronJob) {
+        return {
+          routine: toRoutineView(existing, undefined),
+          created: false,
+          idempotent: true,
+        };
+      }
       const record = createRoutineRecord({
         normalized,
-        enabled: cronJob.enabled,
-        cronJobId: cronJob.id,
-        action: cronJob.payload,
+        enabled: existingCronJob.enabled,
+        cronJobId: existingCronJob.id,
+        action: existingCronJob.payload,
         cronStorePath: context.cronStorePath,
         createdAtMs: existing.createdAtMs,
-        updatedAtMs: cronJob.updatedAtMs,
+        updatedAtMs: existingCronJob.updatedAtMs,
       });
       upsertRoutineRecordToSqlite(record);
-      return { routine: toRoutineView(record, cronJob), created: false, idempotent: true };
+      return { routine: toRoutineView(record, existingCronJob), created: false, idempotent: true };
     }
 
     assertNewRoutineScheduleIsValid(normalized.cronInput.schedule);
+    await context.validateCronCreate?.(normalized.cronInput);
     const nowMs = Date.now();
     const pending = createRoutineRecord({
       normalized,
@@ -792,10 +804,11 @@ export async function setRoutineEnabled(
   enabled: boolean,
   context: RoutineCronContext,
 ): Promise<RoutineSetEnabledResult> {
-  return await withRoutineMutationLock(id, async () => {
-    const record = getRoutineRecordFromSqlite(id);
+  const routineId = normalizeExistingRoutineId(id);
+  return await withRoutineMutationLock(routineId, async () => {
+    const record = getRoutineRecordFromSqlite(routineId);
     if (!record) {
-      throw new Error(`routine not found: ${id}`);
+      throw new Error(`routine not found: ${routineId}`);
     }
     assertRoutineCronStoreActive(record, context.cronStorePath);
     const cronJob = await context.cron.readJob(record.trigger.cronJobId);
@@ -831,10 +844,11 @@ export async function deleteRoutine(
   id: string,
   context: RoutineCronContext,
 ): Promise<RoutineDeleteResult> {
-  return await withRoutineMutationLock(id, async () => {
-    const record = getRoutineRecordFromSqlite(id);
+  const routineId = normalizeExistingRoutineId(id);
+  return await withRoutineMutationLock(routineId, async () => {
+    const record = getRoutineRecordFromSqlite(routineId);
     if (!record) {
-      return { id, deleted: false };
+      return { id: routineId, deleted: false };
     }
     assertRoutineCronStoreActive(record, context.cronStorePath);
     const cronJob = await context.cron.readJob(record.trigger.cronJobId);

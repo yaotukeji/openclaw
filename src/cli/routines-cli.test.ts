@@ -70,6 +70,27 @@ afterEach(() => {
 });
 
 describe("registerRoutinesCli", () => {
+  it("defaults isolated message routines to last-channel announce delivery", async () => {
+    await runRoutinesCommand([
+      "routines",
+      "create",
+      "+1h",
+      "check status",
+      "--name",
+      "Default delivery",
+    ]);
+
+    const createCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "routines.create");
+    const params = createCall?.[2] as {
+      target?: { delivery?: { mode?: string; channel?: string } };
+    };
+
+    expect(params?.target?.delivery).toMatchObject({
+      mode: "announce",
+      channel: "last",
+    });
+  });
+
   it("rejects webhook delivery for main system-event routines", async () => {
     await expect(
       runRoutinesCommand([
