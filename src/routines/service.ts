@@ -47,6 +47,7 @@ type RoutineCronJobCreate = CronJobCreate & { schedule: RoutineSchedule };
 type RoutineBackingCronJob = CronJob & {
   schedule: RoutineSchedule;
   deleteAfterRun: false;
+  failureAlert?: undefined;
 };
 
 type RoutineScheduleTrigger = {
@@ -714,6 +715,9 @@ function assertRoutineBackingCronJobCanRemainLinked(
 ): asserts cronJob is RoutineBackingCronJob {
   if (cronJob.deleteAfterRun !== false) {
     throw routineInvalidRequest(`routine backing cron job changed deleteAfterRun: ${cronJob.id}`);
+  }
+  if (cronJob.failureAlert !== undefined) {
+    throw routineInvalidRequest(`routine backing cron job changed failureAlert: ${cronJob.id}`);
   }
   assertRoutineScheduleSupported(
     cronJob.schedule,

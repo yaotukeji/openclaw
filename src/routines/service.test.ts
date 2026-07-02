@@ -977,6 +977,34 @@ describe("routine service", () => {
     });
   });
 
+  it("marks routines drifted when the backing cron job has a per-job failure alert", async () => {
+    await withOpenClawTestState({ prefix: "routine-failure-alert-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
+      const created = await createRoutine(input, { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        failureAlert: { after: 1, channel: "telegram", to: "ops-alerts" },
+        updatedAtMs: cronJob.updatedAtMs + 1,
+      });
+
+      const listed = await listRoutines({ includeDisabled: true }, { cron });
+      expect(listed.routines[0]).toMatchObject({
+        trigger: { schedule: created.routine.trigger.schedule },
+        status: {
+          status: "drifted",
+          backing: "drifted",
+          driftReason: expect.stringContaining("failureAlert"),
+        },
+      });
+      await expect(createRoutine(input, { cron })).rejects.toThrow("failureAlert");
+    });
+  });
+
   it("detects backing cron drift before treating create as idempotent", async () => {
     await withOpenClawTestState({ prefix: "routine-cron-drift-" }, async () => {
       const cron = createFakeCronService();
@@ -1409,6 +1437,11 @@ describe("routine service", () => {
       label: "delete-after-run",
       patch: { deleteAfterRun: true },
       message: "deleteAfterRun",
+    },
+    {
+      label: "per-job failure alert",
+      patch: { failureAlert: { after: 1, channel: "telegram" } },
+      message: "failureAlert",
     },
     {
       label: "different supported intent",
