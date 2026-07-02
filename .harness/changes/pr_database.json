@@ -1,0 +1,34 @@
+{
+  "openclaw/openclaw#98975": {
+    "pr_number": 98975,
+    "pr_url": "https://github.com/openclaw/openclaw/pull/98975",
+    "branch_name": "fix/mattermost-repair-enable-gateway-startup",
+    "issue_number": 98564,
+    "upstream_owner": "openclaw",
+    "upstream_repo": "openclaw",
+    "fork_owner": "yaotukeji",
+    "title": "fix(config): enable repaired external plugins whose id matches built-in channel",
+    "status": "open",
+    "created_at": "2026-07-02T06:58:23Z",
+    "last_checked_at": "2026-07-02T22:50:00Z",
+    "closed_at": null,
+    "closed_reason": null,
+    "merged": false,
+    "merge_commit_sha": null,
+    "review_comments": [],
+    "ci_status": "fix pushed; waiting for check-test-types and other required checks",
+    "labels": [],
+    "analysis": null,
+    "lifecycle_stage": "submitted",
+    "first_review_at": null,
+    "first_response_at": null,
+    "first_response_hours": null,
+    "reviewer_logins": [],
+    "mentioned_by_maintainer": false,
+    "invited_to_review": false,
+    "thanked_in_comments": false,
+    "modules": [
+      "config"
+    ]
+  }
+}

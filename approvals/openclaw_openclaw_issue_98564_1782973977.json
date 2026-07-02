@@ -1,0 +1,67 @@
+{
+  "approval_id": "openclaw_openclaw_issue_98564_1782973977",
+  "task_id": "16",
+  "repo": "openclaw/openclaw",
+  "issue": {
+    "number": 98564,
+    "title": "[Bug]: Mattermost repair installs external plugin without enabling gateway startup",
+    "url": "https://github.com/openclaw/openclaw/issues/98564",
+    "body": "## Bug type\nRegression (worked before, now fails)\n\n## Beta release blocker\nNo\n\n## Summary\nAfter Mattermost was externalized in 2026.6.11, the configured-plugin repair can install `@openclaw/mattermost` but does not explicitly enable the external plugin, so gateway startup still omits Mattermost.\n\n## Steps to reproduce\n1. Start a fresh 2026.6.10 OpenClaw container with `channels.mattermost.enabled=true`, `baseUrl=http://mattermost:8065`, and the bot token supplied by env SecretRef.\n2. Verify 2026.6.10 loads Mattermost and connects.\n3. Replace the OpenClaw container with `ghcr.io/openclaw/openclaw:2026.6.11`, preserving the same state/config.\n4. Run `openclaw doctor --fix --non-interactive` inside the 2026.6.11 container.\n5. Restart the 2026.6.11 gateway.\n\n## Expected behavior\nDoctor should leave the repaired externalized Mattermost plugin in a state that the gateway can start. After repair and restart, gateway startup should include Mattermost and connect to the configured Mattermost bot.\n\n## Actual behavior\nDoctor reports:\n\n```shell\nInstalled missing configured plugin \"mattermost\" from @openclaw/mattermost.\n```\n\nBut after restarting the same 2026.6.11 container, gateway startup still logs only the built-in plugin set and omits Mattermost:\n\n```shell\n[gateway] http server listening (7 plugins: browser, canvas, device-pair, file-transfer, memory-core, phone-control, talk-voice; ...)\n[gateway] starting channels and sidecars...\n[gateway] ready\n```\n\n`openclaw message send --channel mattermost ...` can load the installed plugin from the CLI path, but the gateway does not start it until the explicit activation bit is added:\n\n```shell\nopenclaw config set plugins.entries.mattermost.enabled true --strict-json\n```\n\nAfter setting that and restarting 2026.6.11, the gateway loads Mattermost and connects:\n\n```shell\n[gateway] http server listening (8 plugins: browser, canvas, device-pair, file-transfer, mattermost, memory-core, phone-control, talk-voice; ...)\n[mattermost] [default] "
+  },
+  "branch_name": "fix/mattermost-repair-enable-gateway-startup",
+  "local_repo_path": "F:\\EPM研发标杆\\github\\github-auto-harness-fixer\\local_repo\\openclaw",
+  "modified_files": [
+    "src/config/plugin-auto-enable.shared.ts",
+    "src/config/plugin-auto-enable.core.test.ts"
+  ],
+  "commit_message": "fix(config): enable repaired external plugins whose id matches built-in channel\n\nWhen doctor --fix repairs a configured external plugin whose pluginId\ncoincides with a built-in chat channel id (e.g. mattermost),\nmaterializePluginAutoEnableCandidates was writing the activation bit to\nchannels.<id>.enabled instead of plugins.entries.<id>.enabled. Gateway\nstartup only honors the plugin entry for non-bundled plugins, so the\nrepaired plugin was silently omitted.\n\nThis change makes resolveAutoEnableChannelId return null for\nconfigured-plugin-repaired candidates, so the activation is materialized\nas plugins.entries.<id>.enabled=true.\n\nFixes openclaw/openclaw#98564\n",
+  "behavior_proof": {
+    "tests": {
+      "src/config/plugin-auto-enable.core.test.ts": "52 passed",
+      "src/commands/doctor/repair-sequencing.test.ts": "15 passed"
+    },
+    "notes": "Regression test added; existing tests still pass."
+  },
+  "compliance_status": {
+    "passed": true,
+    "checks": {
+      "git_email": {
+        "passed": true,
+        "message": "user.email=xu.wei232@xydigit.com matches @xydigit.com"
+      },
+      "github_company": {
+        "passed": true,
+        "message": "GitHub Profile Company: 北京兴云数科技术有限公司"
+      },
+      "ai_disclosure": {
+        "passed": true,
+        "message": "AI disclosure marker found in PR body"
+      }
+    },
+    "ai_disclosure_text": "This PR was prepared with AI assistance. The contributor has reviewed every change,\nverified local tests pass, and takes full responsibility for this submission.\n"
+  },
+  "status": "submitted",
+  "created_at": "2026-07-02T06:32:57.204481Z",
+  "decision": "approved",
+  "decided_at": "2026-07-02T06:58:23.207935Z",
+  "decided_by": "许威",
+  "notes": "Reviewed diff and test results, ready to submit.",
+  "pr_url": "https://github.com/openclaw/openclaw/pull/98975",
+  "pr_number": 98975,
+  "ci_resolution": {
+    "check": "check-test-types",
+    "failure_reason": "src/config/plugin-auto-enable.core.test.ts(1354,29): error TS2322: Type '\"npm\"' is not assignable to type 'PluginOrigin | undefined'",
+    "action": "Changed test manifest origin from 'npm' to 'global' (a valid PluginOrigin) and pushed commit 2b85be6b",
+    "resolved_at": "2026-07-02T22:50:00Z",
+    "latest_result": "pending"
+  },
+  "ci_resolution_history": [
+    {
+      "check": "Real behavior proof",
+      "failure_reason": "External PRs must include authored What Problem This Solves and Evidence sections",
+      "action": "Updated PR body to include '## What Problem This Solves' and '## Evidence' sections",
+      "resolved_at": "2026-07-02T07:30:00Z",
+      "latest_result": "success"
+    }
+  ]
+}
