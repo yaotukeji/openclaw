@@ -1,4 +1,5 @@
 // Msteams plugin module implements monitor handler behavior.
+import type { SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { patchSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { serializeMSTeamsAdaptiveCardActionValue } from "./adaptive-card-submit.js";
@@ -314,7 +315,7 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
                 storePath,
                 sessionKey,
                 replaceEntry: true,
-                update: (current) => {
+                update: (current: SessionEntry) => {
                   if (current.updatedAt === 0) {
                     return null;
                   }
@@ -416,7 +417,7 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
               storePath,
               sessionKey,
               replaceEntry: true,
-              update: (current) => {
+              update: (current: SessionEntry) => {
                 if (current.updatedAt === 0) {
                   return null;
                 }
