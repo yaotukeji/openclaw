@@ -221,6 +221,68 @@ export function stripStaleThinkingSignaturesForCompactionReplay(
   return touched ? out : messages;
 }
 
+/**
+ * Strip ALL thinking signatures from non-latest assistant turns unconditionally.
+ *
+ * This is a create-side prevention mechanism for Anthropic's thinking-signature replay
+ * brick scenario (#94228). Unlike stripInvalidThinkingSignatures which only handles
+ * blank/missing signatures, or stripStaleThinkingSignaturesForCompactionReplay which
+ * only handles compaction-stale signatures, this function strips EVERY signature from
+ * EVERY non-latest assistant turn regardless of apparent validity.
+ *
+ * Rationale: Anthropic's contract states "thinking blocks from closed turns may be omitted"
+ * but does NOT guarantee that historical signatures remain valid across replay contexts.
+ * Cryptographic signatures are bound to specific provider contexts and can become invalid
+ * due to model version changes, config changes, or internal state drift. By stripping all
+ * non-latest signatures proactively, we prevent the replay attack where stale signatures
+ * cause permanent session bricks.
+ *
+ * Latest-turn exemption is preserved because providers expect fresh signatures for the
+ * current turn being replayed. Callers can disable this exemption if they append a new
+ * user turn before provider replay, making the stored assistant turn no longer latest.
+ *
+ * Returns the original array reference when nothing was changed (callers can use
+ * reference equality to skip downstream work).
+ */
+export function stripAllNonLatestThinkingSignatures(
+  messages: AgentMessage[],
+  options: { preserveLatestAssistant?: boolean } = {},
+): AgentMessage[] {
+  const preserveLatestAssistant = options.preserveLatestAssistant ?? true;
+  let latestAssistantIndex = -1;
+  if (preserveLatestAssistant) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (isAssistantMessageWithContent(messages[i])) {
+        latestAssistantIndex = i;
+        break;
+      }
+    }
+  }
+
+  let touched = false;
+  const out: AgentMessage[] = [];
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!isAssistantMessageWithContent(message)) {
+      out.push(message);
+      continue;
+    }
+    if (i === latestAssistantIndex) {
+      out.push(message);
+      continue;
+    }
+
+    const stripped = stripThinkingSignaturesFromMessage(message);
+    if (stripped !== message) {
+      touched = true;
+    }
+    out.push(stripped);
+  }
+
+  return touched ? out : messages;
+}
+
 function hasReplayableThinkingSignature(block: AssistantContentBlock): boolean {
   if (!isThinkingBlock(block)) {
     return false;

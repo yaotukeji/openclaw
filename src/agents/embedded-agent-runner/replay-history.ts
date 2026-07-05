@@ -61,6 +61,7 @@ import {
   dropReasoningFromHistory,
   dropThinkingBlocks,
   shouldPreserveLatestAssistantThinking,
+  stripAllNonLatestThinkingSignatures,
   stripInvalidThinkingSignatures,
   stripStaleThinkingSignaturesForCompactionReplay,
 } from "./thinking.js";
@@ -744,16 +745,28 @@ export async function sanitizeSessionHistory(params: {
     signedThinkingProvider || policy.preserveSignatures
       ? stripStaleThinkingSignaturesForCompactionReplay(sanitizedImages)
       : sanitizedImages;
-  // Some recovery paths supply a narrow policy with preserveSignatures disabled.
-  // Native signed-thinking providers still cannot replay missing/blank
-  // signatures once the assistant turn is no longer latest in the outbound
-  // request.
-  const validatedThinkingSignatures =
+  // Prevent Anthropic thinking-signature replay brick (#94228) by unconditionally stripping
+  // ALL non-latest thinking signatures regardless of apparent validity. Unlike the compaction-
+  // specific handler above, this catches present-but-invalid signatures from any source:
+  // model version drift, config changes, or internal state corruption. Latest-turn exemption
+  // is preserved because providers expect fresh signatures for the current replay turn.
+  const nonLatestStripped =
     signedThinkingProvider || policy.preserveSignatures
-      ? stripInvalidThinkingSignatures(compactionStaleStripped, {
+      ? stripAllNonLatestThinkingSignatures(compactionStaleStripped, {
           preserveLatestAssistant: preserveLatestAssistantThinking,
         })
       : compactionStaleStripped;
+  // Some recovery paths supply a narrow policy with preserveSignatures disabled.
+  // Native signed-thinking providers still cannot replay missing/blank
+  // signatures once the assistant turn is no longer latest in the outbound
+  // request. This now serves as a final safety net for blank/missing signatures
+  // that slipped through the unconditional stripping above (e.g., latest-turn blanks).
+  const validatedThinkingSignatures =
+    signedThinkingProvider || policy.preserveSignatures
+      ? stripInvalidThinkingSignatures(nonLatestStripped, {
+          preserveLatestAssistant: preserveLatestAssistantThinking,
+        })
+      : nonLatestStripped;
   const droppedReasoning = policy.dropReasoningFromHistory
     ? dropReasoningFromHistory(validatedThinkingSignatures)
     : validatedThinkingSignatures;

@@ -10,6 +10,7 @@ import {
   dropReasoningFromHistory,
   dropThinkingBlocks,
   isAssistantMessageWithContent,
+  stripAllNonLatestThinkingSignatures,
   stripInvalidThinkingSignatures,
   stripStaleThinkingSignaturesForCompactionReplay,
   wrapAnthropicStreamWithRecovery,
@@ -1291,5 +1292,164 @@ describe("stripStaleThinkingSignaturesForCompactionReplay", () => {
     const result = stripStaleThinkingSignaturesForCompactionReplay(messages);
     // Same millisecond as compaction: treated as post-compaction; signature preserved
     expect(result).toBe(messages);
+  });
+});
+
+describe("stripAllNonLatestThinkingSignatures", () => {
+  it("returns the original reference when no non-latest assistant turns are present", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({ role: "user", content: "hello" }),
+      castAgentMessage({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "internal", thinkingSignature: "sig" },
+          { type: "text", text: "answer" },
+        ],
+      }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages);
+
+    expect(result).toBe(messages);
+  });
+
+  it("strips ALL thinking signatures from non-latest assistant turns regardless of validity", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "with valid sig", thinkingSignature: "valid_sig_123" },
+          { type: "thinking", thinking: "with blank sig", thinkingSignature: "" },
+          { type: "thinking", thinking: "no sig field" },
+          { type: "redacted_thinking", data: "opaque_data" },
+          { type: "text", text: "visible answer" },
+        ],
+      }),
+      castAgentMessage({ role: "user", content: "follow up" }),
+      castAgentMessage({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "latest thinking", thinkingSignature: "latest_sig" },
+          { type: "text", text: "latest text" },
+        ],
+      }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages);
+    const firstAssistant = result[0] as Extract<AgentMessage, { role: "assistant" }>;
+    const latestAssistant = result[2] as Extract<AgentMessage, { role: "assistant" }>;
+
+    // First turn: ALL signatures stripped (valid, blank, missing, opaque)
+    expect(firstAssistant.content).toEqual([
+      { type: "thinking", thinking: "with valid sig" },
+      { type: "thinking", thinking: "with blank sig" },
+      { type: "thinking", thinking: "no sig field" },
+      { type: "redacted_thinking" },
+      { type: "text", text: "visible answer" },
+    ]);
+
+    // Latest turn: completely preserved
+    expect(latestAssistant.content).toEqual([
+      { type: "thinking", thinking: "latest thinking", thinkingSignature: "latest_sig" },
+      { type: "text", text: "latest text" },
+    ]);
+  });
+
+  it("preserves all signatures when preserveLatestAssistant is false and only one assistant turn exists", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "only turn", thinkingSignature: "only_sig" },
+          { type: "text", text: "answer" },
+        ],
+      }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages, {
+      preserveLatestAssistant: false,
+    });
+
+    // With preserveLatestAssistant: false, there's no "latest" to protect
+    expect(result).toBe(messages);
+  });
+
+  it("can strip invalid signatures from the latest assistant message when preserveLatestAssistant is false", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "missing" },
+          { type: "thinking", thinking: "signed", thinkingSignature: "sig" },
+          { type: "text", text: "answer" },
+        ],
+      }),
+      castAgentMessage({ role: "user", content: "follow up" }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages, {
+      preserveLatestAssistant: false,
+    });
+    const assistant = result[0] as Extract<AgentMessage, { role: "assistant" }>;
+
+    // With preserveLatestAssistant: false, even the "latest" turn gets stripped
+    expect(assistant.content).toEqual([
+      { type: "thinking", thinking: "missing" },
+      { type: "thinking", thinking: "signed" },
+      { type: "text", text: "answer" },
+    ]);
+  });
+
+  it("handles multiple assistant turns correctly, preserving only the absolute latest", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "turn1", thinkingSignature: "sig1" }],
+      }),
+      castAgentMessage({ role: "user", content: "q1" }),
+      castAgentMessage({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "turn2", thinkingSignature: "sig2" }],
+      }),
+      castAgentMessage({ role: "user", content: "q2" }),
+      castAgentMessage({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "turn3", thinkingSignature: "sig3" }],
+      }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages);
+
+    // Turn 1 and 2: signatures stripped
+    expect((result[0] as AssistantMessage).content).toEqual([
+      { type: "thinking", thinking: "turn1" },
+    ]);
+    expect((result[2] as AssistantMessage).content).toEqual([
+      { type: "thinking", thinking: "turn2" },
+    ]);
+
+    // Turn 3 (latest): signature preserved
+    expect((result[4] as AssistantMessage).content).toEqual([
+      { type: "thinking", thinking: "turn3", thinkingSignature: "sig3" },
+    ]);
+  });
+
+  it("uses omitted-reasoning text when stripping leaves a pre-latest turn thinking-only", () => {
+    const messages: AgentMessage[] = [
+      castAgentMessage({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "secret", thinkingSignature: "sig" }],
+      }),
+      castAgentMessage({ role: "user", content: "follow up" }),
+      castAgentMessage({ role: "assistant", content: [{ type: "text", text: "latest" }] }),
+    ];
+
+    const result = stripAllNonLatestThinkingSignatures(messages);
+    const firstAssistant = result[0] as Extract<AgentMessage, { role: "assistant" }>;
+
+    // Thinking-only turn becomes placeholder text after signature stripping
+    expect(firstAssistant.content).toEqual([
+      { type: "text", text: OMITTED_ASSISTANT_REASONING_TEXT },
+    ]);
   });
 });
