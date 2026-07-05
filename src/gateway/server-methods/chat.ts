@@ -3906,7 +3906,10 @@ export const chatHandlers: GatewayRequestHandlers = {
           : Promise.resolve({});
 
       const trimmedMessage = parsedMessage.trim();
-      const commandBody = parsedMessage;
+      const injectThinking = Boolean(
+        p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"),
+      );
+      const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
       const commandSource =
         !suppressCommandInterpretation && trimmedMessage.startsWith("/") ? "text" : undefined;
       const messageForAgent = systemProvenanceReceipt
