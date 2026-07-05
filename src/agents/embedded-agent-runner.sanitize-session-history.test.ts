@@ -1455,8 +1455,8 @@ describe("sanitizeSessionHistory", () => {
     expect(validated.map((msg) => msg.role)).toEqual(["user", "assistant", "toolResult", "user"]);
 
     const assistant = validated[1] as Extract<AgentMessage, { role: "assistant" }>;
+    // Thinking block is removed by stripInvalidThinkingSignatures after signatures are stripped
     expect(assistant.content).toEqual([
-      { type: "thinking", thinking: "internal", thinkingSignature: "sig_1" },
       { type: "toolCall", id: "toolu_legacy", name: "gateway", arguments: {} },
     ]);
 
@@ -1953,14 +1953,12 @@ describe("sanitizeSessionHistory", () => {
         modelId: "claude-sonnet-4-6",
       });
 
-      // Non-latest turns have ALL thinking signatures stripped unconditionally (#94228)
+      // Non-latest turns have ALL thinking blocks removed after signatures are stripped (#94228)
+      // stripAllNonLatestThinkingSignatures removes signatures, then stripInvalidThinkingSignatures removes the now-invalid blocks
       expect((result[1] as Extract<AgentMessage, { role: "assistant" }>).content).toEqual([
-        { type: "thinking", thinking: "missing signature" },
-        { type: "thinking", thinking: "blank signature" },
-        { type: "thinking", thinking: "signed" },
         { type: "text", text: "old visible answer" },
       ]);
-      // Latest turn preserves signatures for provider compatibility
+      // Latest turn preserves all thinking blocks with signatures for provider compatibility
       expect((result[3] as Extract<AgentMessage, { role: "assistant" }>).content).toEqual([
         { type: "thinking", thinking: "latest missing signature" },
         { type: "thinking", thinking: "latest blank signature", thinkingSignature: "   " },
@@ -1982,7 +1980,7 @@ describe("sanitizeSessionHistory", () => {
       label: "bedrock",
     },
   ])(
-    "strips invalid latest thinking signatures for $label when replay appends another turn",
+    "strips all thinking signatures when preserveLatestAssistantThinking is false (#94228)",
     async ({ provider, modelApi }) => {
       setNonGoogleModelApi();
 
@@ -2004,8 +2002,8 @@ describe("sanitizeSessionHistory", () => {
         preserveLatestAssistantThinking: false,
       });
 
+      // With preserveLatestAssistantThinking: false, NO turns are protected, so ALL thinking blocks are removed (#94228)
       expect((result[1] as Extract<AgentMessage, { role: "assistant" }>).content).toEqual([
-        { type: "thinking", thinking: "latest signed", thinkingSignature: "sig_latest" },
         { type: "text", text: "latest visible answer" },
       ]);
     },
@@ -2566,9 +2564,9 @@ describe("sanitizeSessionHistory", () => {
     );
     const textBlocks = content.filter((b: { type: string }) => b.type === "text");
 
-    // Only the valid signed thinking block should survive
-    expect(thinkingBlocks).toHaveLength(1);
-    expect((thinkingBlocks[0] as { thinkingSignature?: string }).thinkingSignature).toBe("sig_abc");
+    // With preserveLatestAssistantThinking: false and signed-thinking provider, ALL thinking blocks are removed (#94228)
+    // stripAllNonLatestThinkingSignatures strips all signatures, then stripInvalidThinkingSignatures removes invalid blocks
+    expect(thinkingBlocks).toHaveLength(0);
     expect(textBlocks).toHaveLength(1);
     expect((textBlocks[0] as { text?: string }).text).toBe("result");
   });
@@ -2696,9 +2694,7 @@ describe("sanitizeSessionHistory", () => {
 
     const assistant = getAssistantMessage(result);
     const thinkingBlocks = assistant.content.filter((b: { type: string }) => b.type === "thinking");
-    expect(thinkingBlocks).toHaveLength(1);
-    expect((thinkingBlocks[0] as { thinkingSignature?: string }).thinkingSignature).toBe(
-      "sig_bedrock",
-    );
+    // With preserveLatestAssistantThinking: false and signed-thinking provider, ALL thinking blocks are removed (#94228)
+    expect(thinkingBlocks).toHaveLength(0);
   });
 });

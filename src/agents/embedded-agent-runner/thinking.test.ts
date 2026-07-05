@@ -1439,7 +1439,7 @@ describe("stripAllNonLatestThinkingSignatures", () => {
     ]);
   });
 
-  it("uses omitted-reasoning text when stripping leaves a pre-latest turn thinking-only", () => {
+  it("strips signatures from thinking-only turns (placeholder replacement happens in stripInvalidThinkingSignatures)", () => {
     const messages: AgentMessage[] = [
       castAgentMessage({
         role: "assistant",
@@ -1452,9 +1452,10 @@ describe("stripAllNonLatestThinkingSignatures", () => {
     const result = stripAllNonLatestThinkingSignatures(messages);
     const firstAssistant = result[0] as Extract<AgentMessage, { role: "assistant" }>;
 
-    // Thinking-only turn becomes placeholder text after signature stripping
+    // stripAllNonLatestThinkingSignatures only strips signatures, does not replace blocks
+    // The placeholder replacement happens later in stripInvalidThinkingSignatures or dropThinkingBlocks
     expect(firstAssistant.content).toEqual([
-      { type: "text", text: OMITTED_ASSISTANT_REASONING_TEXT },
+      { type: "thinking", thinking: "secret" }, // Signature stripped, but block remains
     ]);
   });
 });
