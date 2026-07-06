@@ -1200,7 +1200,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
 
   // SKIP: Pre-existing test failure on main - unrelated to inventory refresh optimization.
   // Test hangs waiting for turn/start RPC call; runCodexAppServerAttempt doesn't reach mock client.
-  // TODO: Investigate async flow in run-attempt.ts separately.
+  // Note: Requires separate investigation of async flow in run-attempt.ts.
   it.skip("reprojects thread-bootstrap context for native-disabled transient Codex threads", async () => {
     const restoreSandboxBackend = registerSandboxBackend(
       "codex-context-test-sandbox",
@@ -1635,7 +1635,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
 
   // SKIP: Pre-existing test failure on main - unrelated to inventory refresh optimization.
   // Test hangs waiting for turn/start RPC call; same issue as other context-engine tests.
-  // TODO: Investigate why runCodexAppServerAttempt doesn't reach mock client in these scenarios.
+  // Note: Requires investigation of why runCodexAppServerAttempt doesn't reach mock client in these scenarios.
   it.skip("does not pre-compact over-budget rendered context-engine prompts before Codex turn/start", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
