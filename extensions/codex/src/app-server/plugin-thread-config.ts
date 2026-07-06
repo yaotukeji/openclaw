@@ -186,7 +186,7 @@ export async function buildCodexPluginThreadConfig(
     shouldRefreshMissingAppInventory(params, policy, inventory);
   // Avoid redundant disk I/O from repeated app discovery in a single request.
   // If we already refreshed the inventory earlier in this call, skip subsequent
-  // forced refreshes unless there's a specific reason that requires it.
+  // forced refreshes to prevent unnecessary duplicate operations.
   if (
     (postInstallRefreshRequired || deferredMissingRefreshRequired) &&
     !inventoryRefreshedInThisCall
