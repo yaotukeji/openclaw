@@ -184,9 +184,9 @@ export async function buildCodexPluginThreadConfig(
     appInventoryRefreshDeferredForActivation &&
     !postInstallRefreshRequired &&
     shouldRefreshMissingAppInventory(params, policy, inventory);
-  // Avoid redundant disk I/O from repeated app discovery in a single request.
-  // If we already refreshed the inventory earlier in this call, skip subsequent
-  // forced refreshes to prevent unnecessary duplicate operations.
+  // Prevent redundant disk I/O: if inventory was already refreshed earlier in this
+  // buildCodexPluginThreadConfig() call, skip additional forced refreshes. This avoids
+  // up to 3x duplicate refresh operations per request while preserving correctness.
   if (
     (postInstallRefreshRequired || deferredMissingRefreshRequired) &&
     !inventoryRefreshedInThisCall
@@ -210,6 +210,7 @@ export async function buildCodexPluginThreadConfig(
     });
     inventoryRefreshedInThisCall = true;
   }
+  // Skip not_ready_plugin_apps refresh if we already refreshed inventory in this call.
   if (
     shouldForceRefreshForNotReadyPluginApps(params, policy, inventory) &&
     !inventoryRefreshedInThisCall
